@@ -8,7 +8,6 @@ import time
 from typing import List, Optional, Tuple
 
 from frost_ref.signing import (
-    BIP340_TAG_CHALLENGE,
     InvalidContributionError,
     PlainPk,
     SessionContext,
@@ -22,40 +21,14 @@ from frost_ref.signing import (
     partial_sig_verify_internal,
     sign,
 )
-from secp256k1lab.keys import pubkey_gen_plain
-from secp256k1lab.secp256k1 import G, GE, Scalar
-from secp256k1lab.util import int_from_bytes, tagged_hash
-from trusted_dealer import trusted_dealer_keygen
+from ed25519lab.ed25519 import B, Scalar
+from ed25519lab.keys import pubkey_gen
+from ed25519lab.schnorr import ed25519_verify
+from trusted_dealer import random_seckey, trusted_dealer_keygen
 
 
 def fromhex_all(hex_values):
     return [bytes.fromhex(value) for value in hex_values]
-
-
-def verify_aggregate_sig(msg: bytes, thresh_pk: bytes, sig: bytes) -> bool:
-    # TRANSITIONAL end-to-end oracle, to be removed in the integration phase.
-    # Once ed25519lab lands, delete this helper and cross-check the aggregate
-    # signature against the library's independent verifier
-    # (ed25519lab.schnorr.ed25519_verify, the cofactorless s*B == R + e*A that
-    # matches Solana), alongside solders / PyNaCl per the port plan.
-    #
-    # Until then the aggregate signature is (compressed R || s), which the
-    # BIP340 schnorr_verify cross-check no longer fits, so we check the
-    # full-point Schnorr equation s*G == R + e*Q directly here. It stays
-    # independent of the aggregation code path, so a regression in
-    # partial_sig_agg (the R it emits or the s it sums) can't pass unnoticed.
-    # Does not cover the negligible R == infinity fallback, which no test
-    # exercises.
-    R = GE.from_bytes_compressed(sig[0:33])
-    s = Scalar.from_bytes_checked(sig[33:65])
-    Q = GE.from_bytes_compressed(thresh_pk)
-    e = Scalar.from_bytes_wrapping(
-        tagged_hash(
-            BIP340_TAG_CHALLENGE,
-            R.to_bytes_compressed() + Q.to_bytes_compressed() + msg,
-        )
-    )
-    return s * G == R + e * Q
 
 
 # Check that calling `try_fn` raises a `exception`. If `exception` is raised,
@@ -106,9 +79,7 @@ def generate_frost_keys(
     if not (2 <= t <= n):
         raise ValueError("values must satisfy: 2 <= t <= n")
 
-    thresh_pk, secshares, pubshares = trusted_dealer_keygen(
-        secrets.token_bytes(32), n, t
-    )
+    thresh_pk, secshares, pubshares = trusted_dealer_keygen(random_seckey(), n, t)
 
     # IDs are 0-indexed: the index in the list IS the participant ID
     assert len(secshares) == n
@@ -181,13 +152,13 @@ def test_sign_verify_vectors():
         secshares = fromhex_all(group["secshares"])
         secnonces = fromhex_all(group["secnonces"])
         for i in range(n):
-            assert pubshares[i] == PlainPk(pubkey_gen_plain(secshares[i]))
-        k_1 = int_from_bytes(secnonces[0][0:32])
-        k_2 = int_from_bytes(secnonces[0][32:64])
-        assert not (k_1 * G).infinity and not (k_2 * G).infinity
+            assert pubshares[i] == PlainPk(pubkey_gen(secshares[i]))
+        k_1 = Scalar.from_bytes_checked(secnonces[0][0:32])
+        k_2 = Scalar.from_bytes_checked(secnonces[0][32:64])
+        assert not (k_1 * B).infinity and not (k_2 * B).infinity
         assert (
             pubnonces[0]
-            == (k_1 * G).to_bytes_compressed() + (k_2 * G).to_bytes_compressed()
+            == (k_1 * B).to_bytes_compressed() + (k_2 * B).to_bytes_compressed()
         )
 
         for tc in group["valid_tests"]:
@@ -275,7 +246,7 @@ def test_det_sign_vectors():
         pubshares = fromhex_all(group["pubshares"])
         secshares = fromhex_all(group["secshares"])
         for i in range(n):
-            assert pubshares[i] == PlainPk(pubkey_gen_plain(secshares[i]))
+            assert pubshares[i] == PlainPk(pubkey_gen(secshares[i]))
 
         for test_case in group["valid_tests"]:
             ids_tmp = test_case["ids"]
@@ -370,7 +341,7 @@ def test_sig_agg_vectors():
             session_ctx = SessionContext(signers_tmp, aggnonce_tmp, msg)
             final_sig = partial_sig_agg(psigs_tmp, session_ctx)
             assert final_sig == expected
-            assert verify_aggregate_sig(msg, thresh_pk, final_sig)
+            assert ed25519_verify(msg, thresh_pk, final_sig)
 
         for test_case in group["error_tests"]:
             exception, except_fn = get_error_details(test_case)
@@ -500,7 +471,7 @@ def test_sign_and_verify_random(iterations: int) -> None:
         )
 
         final_sig = partial_sig_agg(signer_psigs, session_ctx)
-        assert verify_aggregate_sig(msg, thresh_pk, final_sig)
+        assert ed25519_verify(msg, thresh_pk, final_sig)
 
 
 def run_test(test_name, test_func):

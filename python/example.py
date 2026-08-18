@@ -7,7 +7,7 @@ import asyncio
 import argparse
 import secrets
 
-# Import frost_ref first to set up secp256k1lab path
+# Import frost_ref first to set up the ed25519lab / secp256k1lab paths
 from frost_ref import (
     nonce_gen,
     nonce_agg,
@@ -18,30 +18,10 @@ from frost_ref import (
     SessionContext,
     PlainPk,
 )
-from frost_ref.signing import partial_sig_verify_internal, BIP340_TAG_CHALLENGE
+from frost_ref.signing import partial_sig_verify_internal
 
-from secp256k1lab.secp256k1 import G, GE, Scalar
-from secp256k1lab.util import tagged_hash
-from trusted_dealer import trusted_dealer_keygen
-
-
-def verify_aggregate_sig(msg: bytes, thresh_pk: bytes, sig: bytes) -> bool:
-    # TRANSITIONAL end-to-end check, to be removed in the integration phase.
-    # Once ed25519lab lands, delete this and verify the aggregate signature
-    # with the library's own verifier (ed25519lab.schnorr.ed25519_verify, the
-    # cofactorless s*B == R + e*A that matches Solana). Until then the aggregate
-    # is (compressed R || s), so we check the full-point Schnorr equation
-    # s*G == R + e*Q directly here.
-    R = GE.from_bytes_compressed(sig[0:33])
-    s = Scalar.from_bytes_checked(sig[33:65])
-    Q = GE.from_bytes_compressed(thresh_pk)
-    e = Scalar.from_bytes_wrapping(
-        tagged_hash(
-            BIP340_TAG_CHALLENGE,
-            R.to_bytes_compressed() + Q.to_bytes_compressed() + msg,
-        )
-    )
-    return s * G == R + e * Q
+from ed25519lab.schnorr import ed25519_verify
+from trusted_dealer import random_seckey, trusted_dealer_keygen
 
 
 #
@@ -94,14 +74,12 @@ def generate_frost_keys(
     """Generate t-of-n FROST keys using trusted dealer.
 
     Returns:
-        thresh_pk: Threshold public key (33-byte compressed)
+        thresh_pk: Threshold public key (32-byte RFC 8032 encoding)
         ids: List of signer IDs (0-indexed: 0, 1, ..., n-1)
-        secshares: List of secret shares (32-byte scalars)
-        pubshares: List of public shares (33-byte compressed)
+        secshares: List of secret shares (32-byte little-endian scalars)
+        pubshares: List of public shares (32-byte RFC 8032 encoding)
     """
-    thresh_pk, secshares, pubshares = trusted_dealer_keygen(
-        secrets.token_bytes(32), n, t
-    )
+    thresh_pk, secshares, pubshares = trusted_dealer_keygen(random_seckey(), n, t)
 
     assert len(secshares) == n
     ids = list(range(len(secshares)))  # ids are 0..n-1
@@ -155,7 +133,7 @@ async def coordinator(
     Coordinator in FROST signing protocol.
 
     Returns:
-        final_sig: Final aggregate signature (transitional: compressed R || s)
+        final_sig: Final 64-byte Ed25519 signature (R || s)
     """
     # Determine the signers
     signer_ids = signers_ctx.ids
@@ -295,11 +273,11 @@ def main():
     print()
 
     print("=== Final Signature ===")
-    print(f"Aggregate signature (transitional, compressed R || s): {final_sig.hex()}")
+    print(f"Ed25519 signature (R || s): {final_sig.hex()}")
     print()
 
     # 6. Verify signature
-    assert verify_aggregate_sig(msg, thresh_pk, final_sig)
+    assert ed25519_verify(msg, thresh_pk, final_sig)
     print("=== Verification ===")
     print("Signature verified successfully!")
 

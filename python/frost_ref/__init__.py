@@ -1,7 +1,10 @@
 from pathlib import Path
 import sys
 
-# Add the vendored copy of secp256k1lab to path.
+# Add the vendored copies of ed25519lab (used by the reference implementation)
+# and secp256k1lab (still used by the test helpers / generators until they are
+# migrated with the real library) to path.
+sys.path.append(str(Path(__file__).parent / "../ed25519lab/src"))
 sys.path.append(str(Path(__file__).parent / "../secp256k1lab/src"))
 
 from .signing import (

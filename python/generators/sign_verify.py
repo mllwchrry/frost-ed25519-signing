@@ -8,13 +8,15 @@ from frost_ref import (
     partial_sig_verify,
     sign,
 )
-from secp256k1lab.secp256k1 import Scalar
+from ed25519lab.ed25519 import B, Scalar
 
 from generators.common import (
     COMMON_MSGS,
     CONFIGS,
     GROUP_ORDER,
-    AGGNONCE_WRONG_TAG,
+    AGGNONCE_BAD_FIRST_HALF,
+    NONCANONICAL_POINT,
+    OFFCURVE_POINT,
     SharedGroupInputs,
     assign_tc_ids,
     bytes_list_to_hex,
@@ -29,12 +31,11 @@ from generators.common import (
 
 # Fault literals that are case payloads rather than pool material (config-independent,
 # never indexed from a pool), so they stay local to this generator.
-AGGNONCE_BAD_XCOORD = bytes.fromhex(
-    "028465FCF0BBDBCF443AABCCE533D42B4B5A10966AC09A49655E8C42DAAB8FCD61020000000000000000000000000000000000000000000000000000000000000009"
-)
-AGGNONCE_EXCEEDS_FIELD = bytes.fromhex(
-    "028465FCF0BBDBCF443AABCCE533D42B4B5A10966AC09A49655E8C42DAAB8FCD6102FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30"
-)
+# Aggregate nonces with a valid first half and a non-canonical second half.
+# Second half is a canonical y with no matching x (off the curve).
+AGGNONCE_OFFCURVE = B.to_bytes_compressed() + OFFCURVE_POINT
+# Second half is a non-canonical encoding (y >= p).
+AGGNONCE_NONCANONICAL = B.to_bytes_compressed() + NONCANONICAL_POINT
 
 
 class SignVerifyGroupBuilder:
@@ -404,10 +405,10 @@ class SignVerifyGroupBuilder:
             self.min_s,
             0,
             0,
-            AGGNONCE_WRONG_TAG,
+            AGGNONCE_BAD_FIRST_HALF,
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate nonce is invalid: first half has an unknown tag 0x04",
+            "Aggregate nonce is invalid: first half is a non-canonical point encoding",
         )
         self._append_sign_error(
             0,
@@ -415,7 +416,7 @@ class SignVerifyGroupBuilder:
             self.min_s,
             0,
             0,
-            AGGNONCE_BAD_XCOORD,
+            AGGNONCE_OFFCURVE,
             COMMON_MSGS[0],
             "invalid_contrib",
             "Aggregate nonce is invalid: second half is not a point on the curve",
@@ -426,10 +427,10 @@ class SignVerifyGroupBuilder:
             self.min_s,
             0,
             0,
-            AGGNONCE_EXCEEDS_FIELD,
+            AGGNONCE_NONCANONICAL,
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate nonce is invalid: second half's x-coordinate exceeds the field size",
+            "Aggregate nonce is invalid: second half is a non-canonical encoding (y >= p)",
         )
         # All-zero secret nonce (first scalar out of range).
         self._append_sign_error(

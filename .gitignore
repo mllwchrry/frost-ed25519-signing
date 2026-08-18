@@ -1,2 +1,7 @@
 .vscode/
+.idea/
 *__pycache__/
+# gen_vectors.py writes to "vectors/" relative to the current directory; a
+# root-level one is a stray from running it outside python/ (the real vectors
+# live in python/vectors/).
+/vectors/
