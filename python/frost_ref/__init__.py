@@ -17,7 +17,6 @@ from .signing import (
     InvalidContributionError,
     # Types
     PlainPk,
-    XonlyPk,
     SignersContext,
     SessionContext,
 )
@@ -35,7 +34,6 @@ __all__ = [
     "InvalidContributionError",
     # Types
     "PlainPk",
-    "XonlyPk",
     "SignersContext",
     "SessionContext",
 ]

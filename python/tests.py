@@ -8,11 +8,11 @@ import time
 from typing import List, Optional, Tuple
 
 from frost_ref.signing import (
+    BIP340_TAG_CHALLENGE,
     InvalidContributionError,
     PlainPk,
     SessionContext,
     SignersContext,
-    XonlyPk,
     deterministic_sign,
     nonce_agg,
     nonce_gen,
@@ -23,14 +23,39 @@ from frost_ref.signing import (
     sign,
 )
 from secp256k1lab.keys import pubkey_gen_plain
-from secp256k1lab.secp256k1 import G
-from secp256k1lab.bip340 import schnorr_verify
-from secp256k1lab.util import int_from_bytes
+from secp256k1lab.secp256k1 import G, GE, Scalar
+from secp256k1lab.util import int_from_bytes, tagged_hash
 from trusted_dealer import trusted_dealer_keygen
 
 
 def fromhex_all(hex_values):
     return [bytes.fromhex(value) for value in hex_values]
+
+
+def verify_aggregate_sig(msg: bytes, thresh_pk: bytes, sig: bytes) -> bool:
+    # TRANSITIONAL end-to-end oracle, to be removed in the integration phase.
+    # Once ed25519lab lands, delete this helper and cross-check the aggregate
+    # signature against the library's independent verifier
+    # (ed25519lab.schnorr.ed25519_verify, the cofactorless s*B == R + e*A that
+    # matches Solana), alongside solders / PyNaCl per the port plan.
+    #
+    # Until then the aggregate signature is (compressed R || s), which the
+    # BIP340 schnorr_verify cross-check no longer fits, so we check the
+    # full-point Schnorr equation s*G == R + e*Q directly here. It stays
+    # independent of the aggregation code path, so a regression in
+    # partial_sig_agg (the R it emits or the s it sums) can't pass unnoticed.
+    # Does not cover the negligible R == infinity fallback, which no test
+    # exercises.
+    R = GE.from_bytes_compressed(sig[0:33])
+    s = Scalar.from_bytes_checked(sig[33:65])
+    Q = GE.from_bytes_compressed(thresh_pk)
+    e = Scalar.from_bytes_wrapping(
+        tagged_hash(
+            BIP340_TAG_CHALLENGE,
+            R.to_bytes_compressed() + Q.to_bytes_compressed() + msg,
+        )
+    )
+    return s * G == R + e * Q
 
 
 # Check that calling `try_fn` raises a `exception`. If `exception` is raised,
@@ -112,15 +137,15 @@ def test_nonce_gen_vectors():
         pubshare = get_value_maybe("pubshare")
         if pubshare is not None:
             pubshare = PlainPk(pubshare)
-        thresh_pk_xonly = get_value_maybe("thresh_pk_xonly")
-        if thresh_pk_xonly is not None:
-            thresh_pk_xonly = XonlyPk(thresh_pk_xonly)
+        thresh_pk = get_value_maybe("thresh_pk")
+        if thresh_pk is not None:
+            thresh_pk = PlainPk(thresh_pk)
         msg = get_value_maybe("msg")
         extra_in = get_value_maybe("extra_in")
         expected = test_case["expected"]
 
         assert nonce_gen_internal(
-            rand, secshare, pubshare, thresh_pk_xonly, msg, extra_in
+            rand, secshare, pubshare, thresh_pk, msg, extra_in
         ) == (bytes.fromhex(expected[0]), bytes.fromhex(expected[1]))
 
 
@@ -343,9 +368,9 @@ def test_sig_agg_vectors():
 
             signers_tmp = SignersContext(n, t, ids_tmp, pubshares_tmp, thresh_pk)
             session_ctx = SessionContext(signers_tmp, aggnonce_tmp, msg)
-            bip340sig = partial_sig_agg(psigs_tmp, session_ctx)
-            assert bip340sig == expected
-            assert schnorr_verify(msg, thresh_pk[1:], bip340sig)
+            final_sig = partial_sig_agg(psigs_tmp, session_ctx)
+            assert final_sig == expected
+            assert verify_aggregate_sig(msg, thresh_pk, final_sig)
 
         for test_case in group["error_tests"]:
             exception, except_fn = get_error_details(test_case)
@@ -401,7 +426,6 @@ def test_sign_and_verify_random(iterations: int) -> None:
         # byte arrays can be passed in for the corresponding arguments
         # instead.
         msg = secrets.token_bytes(32)
-        thresh_pk_xonly = XonlyPk(thresh_pk[1:])
 
         signer_secnonces = []
         signer_pubnonces = []
@@ -411,7 +435,7 @@ def test_sign_and_verify_random(iterations: int) -> None:
             secnonce_i, pubnonce_i = nonce_gen(
                 signer_secshares[i],
                 signer_pubshares[i],
-                thresh_pk_xonly,
+                thresh_pk,
                 msg,
                 timestamp.to_bytes(8, "big"),
             )
@@ -425,7 +449,7 @@ def test_sign_and_verify_random(iterations: int) -> None:
             secnonce_final, pubnonce_final = nonce_gen(
                 signer_secshares[-1],
                 signer_pubshares[-1],
-                thresh_pk_xonly,
+                thresh_pk,
                 msg,
                 timestamp.to_bytes(8, "big"),
             )
@@ -454,9 +478,7 @@ def test_sign_and_verify_random(iterations: int) -> None:
                 psig_i = sign(
                     signer_secnonces[i], signer_secshares[i], signer_ids[i], session_ctx
                 )
-            assert partial_sig_verify(
-                psig_i, signer_pubnonces, signers_ctx, msg, i
-            )
+            assert partial_sig_verify(psig_i, signer_pubnonces, signers_ctx, msg, i)
             signer_psigs.append(psig_i)
 
         # An exception is thrown if secnonce is accidentally reused
@@ -477,8 +499,8 @@ def test_sign_and_verify_random(iterations: int) -> None:
             signer_psigs[0], signer_pubnonces, signers_ctx, secrets.token_bytes(32), 0
         )
 
-        bip340sig = partial_sig_agg(signer_psigs, session_ctx)
-        assert schnorr_verify(msg, thresh_pk_xonly, bip340sig)
+        final_sig = partial_sig_agg(signer_psigs, session_ctx)
+        assert verify_aggregate_sig(msg, thresh_pk, final_sig)
 
 
 def run_test(test_name, test_func):

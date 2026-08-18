@@ -17,12 +17,31 @@ from frost_ref import (
     SignersContext,
     SessionContext,
     PlainPk,
-    XonlyPk,
 )
-from frost_ref.signing import partial_sig_verify_internal
+from frost_ref.signing import partial_sig_verify_internal, BIP340_TAG_CHALLENGE
 
-from secp256k1lab.bip340 import schnorr_verify
+from secp256k1lab.secp256k1 import G, GE, Scalar
+from secp256k1lab.util import tagged_hash
 from trusted_dealer import trusted_dealer_keygen
+
+
+def verify_aggregate_sig(msg: bytes, thresh_pk: bytes, sig: bytes) -> bool:
+    # TRANSITIONAL end-to-end check, to be removed in the integration phase.
+    # Once ed25519lab lands, delete this and verify the aggregate signature
+    # with the library's own verifier (ed25519lab.schnorr.ed25519_verify, the
+    # cofactorless s*B == R + e*A that matches Solana). Until then the aggregate
+    # is (compressed R || s), so we check the full-point Schnorr equation
+    # s*G == R + e*Q directly here.
+    R = GE.from_bytes_compressed(sig[0:33])
+    s = Scalar.from_bytes_checked(sig[33:65])
+    Q = GE.from_bytes_compressed(thresh_pk)
+    e = Scalar.from_bytes_wrapping(
+        tagged_hash(
+            BIP340_TAG_CHALLENGE,
+            R.to_bytes_compressed() + Q.to_bytes_compressed() + msg,
+        )
+    )
+    return s * G == R + e * Q
 
 
 #
@@ -107,12 +126,10 @@ async def participant(
     Participant in FROST signing protocol.
 
     Returns:
-        (psig, final_sig): Partial signature and final BIP340 signature
+        (psig, final_sig): Partial signature and final aggregate signature
     """
-    thresh_pk_xonly = XonlyPk(signers_ctx.thresh_pk[1:])
-
     # Round 1: Nonce generation
-    secnonce, pubnonce = nonce_gen(secshare, pubshare, thresh_pk_xonly, msg, None)
+    secnonce, pubnonce = nonce_gen(secshare, pubshare, signers_ctx.thresh_pk, msg, None)
     chan.send(pubnonce)
     aggnonce = await chan.receive()
 
@@ -138,7 +155,7 @@ async def coordinator(
     Coordinator in FROST signing protocol.
 
     Returns:
-        final_sig: Final BIP340 signature (64 bytes)
+        final_sig: Final aggregate signature (transitional: compressed R || s)
     """
     # Determine the signers
     signer_ids = signers_ctx.ids
@@ -278,11 +295,11 @@ def main():
     print()
 
     print("=== Final Signature ===")
-    print(f"BIP340 signature: {final_sig.hex()}")
+    print(f"Aggregate signature (transitional, compressed R || s): {final_sig.hex()}")
     print()
 
     # 6. Verify signature
-    assert schnorr_verify(msg, thresh_pk[1:], final_sig)
+    assert verify_aggregate_sig(msg, thresh_pk, final_sig)
     print("=== Verification ===")
     print("Signature verified successfully!")
 
