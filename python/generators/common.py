@@ -77,19 +77,9 @@ COMMON_MSGS = [
     ),  # 38-byte message
 ]
 
-COMMON_TWEAKS = hex_list_to_bytes(
-    [
-        "E8F791FF9225A2AF0102AFFF4A9A723D9612A682A25EBE79802B263CDFCD83BB",
-        "AE2EA797CC0FE72AC5B97B97F3C6957D7E4199A167A58EB08BCAFFDA70AC0455",
-        "F52ECBC565B3D8BEA2DFD5B75A4F457E54369809322E4120831626F290FA87E0",
-        "1969AD73CC177FA0B4FCED6DF1F7BF9907E665FDE9BA196A74FED0A3CF5AEF9D",
-    ]
-)
-
-# secp256k1 group order n: the single out-of-range boundary shared by the tweak and
-# partial-signature generators
+# secp256k1 group order n: the out-of-range boundary used by the
+# partial-signature generator
 GROUP_ORDER = GE.ORDER.to_bytes(32, "big")
-OUT_OF_RANGE_TWEAK = GROUP_ORDER
 INVALID_PUBSHARE = bytes.fromhex(
     "020000000000000000000000000000000000000000000000000000000000000007"
 )
@@ -239,16 +229,6 @@ class SharedGroupInputs:
         assert Scalar.from_bytes_nonzero_checked(zero_second_secnonce[0:32])
         self.pool_secnonces = self.secnonces + [b"\x00" * 64, zero_second_secnonce]
 
-        # tweaks pool: 4 common tweaks, out-of-range tweak, then the per-config
-        # infinity tweak (negation of the reconstructed threshold secret over the
-        # minimum set; degenerates to -secshares[0] at t=1).
-        infinity_tweak_scalar = -reconstruct_thresh_sk(list(range(t)), secshares[:t])
-        assert (
-            GE.from_bytes_compressed(self.thresh_pk) + infinity_tweak_scalar * G
-        ).infinity
-        infinity_tweak = infinity_tweak_scalar.to_bytes()
-        self.tweaks_pool = list(COMMON_TWEAKS) + [OUT_OF_RANGE_TWEAK, infinity_tweak]
-
         # named offsets into the pools, all derived from n
         self.INVALID_PUBSHARE_IDX = n
         self.INFINITY_PUBSHARE_IDX = n + 1
@@ -258,9 +238,6 @@ class SharedGroupInputs:
         self.SECNONCE_ZERO_IDX = n
         self.SECNONCE_ZERO_SECOND_IDX = n + 1
         self.OUT_OF_RANGE_ID = n
-        # tweaks-pool offsets, n-independent
-        self.OUT_OF_RANGE_TWEAK_IDX = len(COMMON_TWEAKS)
-        self.INFINITY_TWEAK_IDX = len(COMMON_TWEAKS) + 1
 
 
 def has_excl0_subset(t, n):
