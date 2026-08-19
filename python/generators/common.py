@@ -7,7 +7,6 @@ from typing import Dict, List, Sequence, Union
 
 from frost_ref.signing import (
     PlainPk,
-    XonlyPk,
     derive_interpolating_value,
     nonce_agg,
     nonce_gen_internal,
@@ -114,12 +113,12 @@ def write_test_vectors(filename, vectors):
         f.write(text)
 
 
-def generate_all_nonces(rand, secshares, pubshares, xonly_thresh_pk, msg=None):
+def generate_all_nonces(rand, secshares, pubshares, thresh_pk, msg=None):
     secnonces = []
     pubnonces = []
     for i in range(len(secshares)):
         sec, pub = nonce_gen_internal(
-            rand, secshares[i], pubshares[i], xonly_thresh_pk, msg, None
+            rand, secshares[i], pubshares[i], thresh_pk, msg, None
         )
         secnonces.append(sec)
         pubnonces.append(pub)
@@ -136,19 +135,17 @@ def reconstruct_thresh_sk(ids, secshares):
     return result
 
 
-# Chosen so the threshold pubkey is odd-y (prefix 03)
+# Fixed threshold-secret keys, one per (t, n) config, kept stable so the test
+# vectors are reproducible.
 SECKEY_1OF3 = bytes.fromhex(
     "06D47E05E97481428654563E5AE69C20C49642773B7334220E63110259A30C32"
 )
-# Chosen so the threshold pubkey is even-y (prefix 02)
 SECKEY_2OF3 = bytes.fromhex(
     "4C08C37F5B9A88FAE396A06E286BA41B654457BF5E35B4A693096ED9AB1491F5"
 )
-# Chosen so the threshold pubkey is even-y (prefix 02)
 SECKEY_3OF3 = bytes.fromhex(
     "70E90852E9541FE47552B738A14C2B9B5B38C0979D640BA8C7A5A5EEE1BDA405"
 )
-# Chosen so the threshold pubkey is odd-y (prefix 03)
 SECKEY_3OF5 = bytes.fromhex(
     "C97F278DAC5FC3214F4C2DD7551C84D4854DCA143887F54692735C61A16E902A"
 )
@@ -189,11 +186,10 @@ class SharedGroupInputs:
         self.n = n
         self.t = t
         self.thresh_pk = thresh_pk
-        self.xonly_thresh_pk = XonlyPk(thresh_pk[1:])
         self.secshares = secshares
         self.pubshares = pubshares
         self.secnonces, self.pubnonces = generate_all_nonces(
-            COMMON_RAND, secshares, pubshares, self.xonly_thresh_pk
+            COMMON_RAND, secshares, pubshares, PlainPk(thresh_pk)
         )
 
         # pubshares pool: off-curve point at slot n, then a valid point at slot n+1

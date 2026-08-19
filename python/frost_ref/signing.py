@@ -15,11 +15,11 @@ from secp256k1lab.secp256k1 import G, GE, Scalar
 from secp256k1lab.util import tagged_hash, xor_bytes
 
 PlainPk = NewType("PlainPk", bytes)
-XonlyPk = NewType("XonlyPk", bytes)
 ContribKind = Literal["aggothernonce", "aggnonce", "psig", "pubnonce"]
 
-# Tagged hash domain-separation tags. The challenge tag is inherited from
-# BIP340 for signature compatibility; the rest are specific to this BIP.
+# Tagged hash domain-separation tags. The challenge still uses the BIP340 tag
+# transitionally; it becomes an untagged SHA-512 challenge with the Ed25519
+# curve swap. The rest are specific to this BIP.
 FROST_TAG_AUX = "BIP0445/aux"
 FROST_TAG_NONCE = "BIP0445/nonce"
 FROST_TAG_NONCECOEF = "BIP0445/noncecoef"
@@ -118,7 +118,7 @@ def validate_signers_ctx(signers_ctx: SignersContext) -> None:
 def nonce_hash(
     rand_: bytes,
     pubshare: PlainPk,
-    thresh_pk_xonly: XonlyPk,
+    thresh_pk: PlainPk,
     i: int,
     msg_prefixed: bytes,
     extra_in: bytes,
@@ -127,8 +127,8 @@ def nonce_hash(
     buf += rand_
     buf += len(pubshare).to_bytes(1, "big")
     buf += pubshare
-    buf += len(thresh_pk_xonly).to_bytes(1, "big")
-    buf += thresh_pk_xonly
+    buf += len(thresh_pk).to_bytes(1, "big")
+    buf += thresh_pk
     buf += msg_prefixed
     buf += len(extra_in).to_bytes(4, "big")
     buf += extra_in
@@ -140,7 +140,7 @@ def nonce_gen_internal(
     rand: bytes,
     secshare: Optional[bytes],
     pubshare: Optional[PlainPk],
-    thresh_pk_xonly: Optional[XonlyPk],
+    thresh_pk: Optional[PlainPk],
     msg: Optional[bytes],
     extra_in: Optional[bytes],
 ) -> Tuple[bytearray, bytes]:
@@ -150,8 +150,8 @@ def nonce_gen_internal(
         rand_ = rand
     if pubshare is None:
         pubshare = PlainPk(b"")
-    if thresh_pk_xonly is None:
-        thresh_pk_xonly = XonlyPk(b"")
+    if thresh_pk is None:
+        thresh_pk = PlainPk(b"")
     if msg is None:
         msg_prefixed = b"\x00"
     else:
@@ -161,10 +161,10 @@ def nonce_gen_internal(
     if extra_in is None:
         extra_in = b""
     k_1 = Scalar.from_bytes_wrapping(
-        nonce_hash(rand_, pubshare, thresh_pk_xonly, 0, msg_prefixed, extra_in)
+        nonce_hash(rand_, pubshare, thresh_pk, 0, msg_prefixed, extra_in)
     )
     k_2 = Scalar.from_bytes_wrapping(
-        nonce_hash(rand_, pubshare, thresh_pk_xonly, 1, msg_prefixed, extra_in)
+        nonce_hash(rand_, pubshare, thresh_pk, 1, msg_prefixed, extra_in)
     )
     # k_1 == 0 or k_2 == 0 cannot occur except with negligible probability.
     assert k_1 != 0
@@ -182,7 +182,7 @@ def nonce_gen_internal(
 def nonce_gen(
     secshare: Optional[bytes],
     pubshare: Optional[PlainPk],
-    thresh_pk_xonly: Optional[XonlyPk],
+    thresh_pk: Optional[PlainPk],
     msg: Optional[bytes],
     extra_in: Optional[bytes],
 ) -> Tuple[bytearray, bytes]:
@@ -190,10 +190,10 @@ def nonce_gen(
         raise ValueError("The optional byte array secshare must have length 32.")
     if pubshare is not None and len(pubshare) != 33:
         raise ValueError("The optional byte array pubshare must have length 33.")
-    if thresh_pk_xonly is not None and len(thresh_pk_xonly) != 32:
-        raise ValueError("The optional byte array thresh_pk_xonly must have length 32.")
+    if thresh_pk is not None and len(thresh_pk) != 33:
+        raise ValueError("The optional byte array thresh_pk must have length 33.")
     rand = secrets.token_bytes(32)
-    return nonce_gen_internal(rand, secshare, pubshare, thresh_pk_xonly, msg, extra_in)
+    return nonce_gen_internal(rand, secshare, pubshare, thresh_pk, msg, extra_in)
 
 
 def nonce_agg(pubnonces: List[bytes]) -> bytes:
@@ -228,7 +228,11 @@ def get_session_values(
     b = Scalar.from_bytes_wrapping(
         tagged_hash(
             FROST_TAG_NONCECOEF,
-            len(ids).to_bytes(4, "big") + ser_ids + aggnonce + Q.to_bytes_xonly() + msg,
+            len(ids).to_bytes(4, "big")
+            + ser_ids
+            + aggnonce
+            + Q.to_bytes_compressed()
+            + msg,
         )
     )
     assert b != 0
@@ -242,7 +246,10 @@ def get_session_values(
     R = R_ if not R_.infinity else G
     assert not R.infinity
     e = Scalar.from_bytes_wrapping(
-        tagged_hash(BIP340_TAG_CHALLENGE, R.to_bytes_xonly() + Q.to_bytes_xonly() + msg)
+        tagged_hash(
+            BIP340_TAG_CHALLENGE,
+            R.to_bytes_compressed() + Q.to_bytes_compressed() + msg,
+        )
     )
     assert e != 0
     return (Q, ids, pubshares, b, R, e)
@@ -257,27 +264,25 @@ def serialize_ids(ids: List[int]) -> bytes:
 def sign(
     secnonce: bytearray, secshare: bytes, my_id: int, session_ctx: SessionContext
 ) -> bytes:
-    (Q, ids, pubshares, b, R, e) = get_session_values(
+    (_, ids, pubshares, b, _, e) = get_session_values(
         session_ctx
     )  # internally validates signers_ctx
     try:
-        k_1_ = Scalar.from_bytes_nonzero_checked(bytes(secnonce[0:32]))
+        k_1 = Scalar.from_bytes_nonzero_checked(bytes(secnonce[0:32]))
     except ValueError:
         raise ValueError("first secnonce value is out of range.")
     try:
-        k_2_ = Scalar.from_bytes_nonzero_checked(bytes(secnonce[32:64]))
+        k_2 = Scalar.from_bytes_nonzero_checked(bytes(secnonce[32:64]))
     except ValueError:
         raise ValueError("second secnonce value is out of range.")
     # Overwrite the secnonce argument with zeros, so the subsequent calls of
     # sign with the same secnonce raise a ValueError.
     secnonce[:] = bytearray(b"\x00" * 64)
-    k_1 = k_1_ if R.has_even_y() else -k_1_
-    k_2 = k_2_ if R.has_even_y() else -k_2_
     try:
-        d_ = Scalar.from_bytes_nonzero_checked(secshare)
+        d = Scalar.from_bytes_nonzero_checked(secshare)
     except ValueError:
         raise ValueError("The signer's secret share value is out of range.")
-    P = d_ * G
+    P = d * G
     assert not P.infinity
     my_pubshare = P.to_bytes_compressed()
     if my_pubshare not in pubshares:
@@ -289,12 +294,10 @@ def sign(
             "The signer's id must be present in the participant identifier list."
         )
     a = derive_interpolating_value(ids, my_id)
-    g = Scalar(1) if Q.has_even_y() else Scalar(-1)
-    d = g * d_
     s = k_1 + b * k_2 + e * a * d
     psig = s.to_bytes()
-    R1_partial = k_1_ * G
-    R2_partial = k_2_ * G
+    R1_partial = k_1 * G
+    R2_partial = k_2 * G
     assert not R1_partial.infinity
     assert not R2_partial.infinity
     pubnonce = R1_partial.to_bytes_compressed() + R2_partial.to_bytes_compressed()
@@ -308,7 +311,7 @@ def det_nonce_hash(
     my_id: int,
     ids: List[int],
     aggothernonce: bytes,
-    thresh_pk_xonly: bytes,
+    thresh_pk: bytes,
     msg: bytes,
     i: int,
 ) -> bytes:
@@ -318,7 +321,7 @@ def det_nonce_hash(
     buf += len(ids).to_bytes(4, "big")
     buf += serialize_ids(ids)
     buf += aggothernonce
-    buf += thresh_pk_xonly
+    buf += thresh_pk
     buf += len(msg).to_bytes(8, "big")
     buf += msg
     buf += i.to_bytes(1, "big")
@@ -339,7 +342,6 @@ def deterministic_sign(
         secshare_ = secshare
     validate_signers_ctx(signers_ctx)
     _, _, ids, _, thresh_pk = signers_ctx
-    thresh_pk_xonly = XonlyPk(GE.from_bytes_compressed(thresh_pk).to_bytes_xonly())
 
     # A sole signer (u = 1) has no other nonces to aggregate, so aggothernonce is
     # omitted. Bind the empty byte string into the nonce hash and use the signer's
@@ -350,10 +352,10 @@ def deterministic_sign(
         aggothernonce_ = aggothernonce
 
     k_1 = Scalar.from_bytes_wrapping(
-        det_nonce_hash(secshare_, my_id, ids, aggothernonce_, thresh_pk_xonly, msg, 0)
+        det_nonce_hash(secshare_, my_id, ids, aggothernonce_, thresh_pk, msg, 0)
     )
     k_2 = Scalar.from_bytes_wrapping(
-        det_nonce_hash(secshare_, my_id, ids, aggothernonce_, thresh_pk_xonly, msg, 1)
+        det_nonce_hash(secshare_, my_id, ids, aggothernonce_, thresh_pk, msg, 1)
     )
     # k_1 == 0 or k_2 == 0 cannot occur except with negligible probability.
     assert k_1 != 0
@@ -403,7 +405,7 @@ def partial_sig_verify_internal(
     pubshare: bytes,
     session_ctx: SessionContext,
 ) -> bool:
-    (Q, ids, pubshares, b, R, e) = get_session_values(session_ctx)
+    (_, ids, pubshares, b, _, e) = get_session_values(session_ctx)
     try:
         s = Scalar.from_bytes_checked(psig)
     except ValueError:
@@ -417,15 +419,13 @@ def partial_sig_verify_internal(
         R2_partial = GE.from_bytes_compressed(pubnonce[33:66])
     except ValueError:
         return False
-    Re_s_ = R1_partial + b * R2_partial
-    Re_s = Re_s_ if R.has_even_y() else -Re_s_
+    Re_s = R1_partial + b * R2_partial
     try:
         P = GE.from_bytes_compressed(pubshare)
     except ValueError:
         return False
     a = derive_interpolating_value(ids, my_id)
-    g = Scalar(1) if Q.has_even_y() else Scalar(-1)
-    return s * G == Re_s + (e * a * g) * P
+    return s * G == Re_s + (e * a) * P
 
 
 def partial_sig_agg(psigs: List[bytes], session_ctx: SessionContext) -> bytes:
@@ -439,4 +439,4 @@ def partial_sig_agg(psigs: List[bytes], session_ctx: SessionContext) -> bytes:
         except ValueError:
             raise InvalidContributionError(idx, "psig")
         s += s_i
-    return R.to_bytes_xonly() + s.to_bytes()
+    return R.to_bytes_compressed() + s.to_bytes()

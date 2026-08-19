@@ -20,7 +20,6 @@ def generate_nonce_gen_vectors():
     tc_id = 1
 
     _, _, thresh_pk, _, secshares, pubshares = frost_keygen(SECKEY_2OF3)
-    xonly_thresh_pk = thresh_pk[1:]
     extra_in = bytes.fromhex(
         "0808080808080808080808080808080808080808080808080808080808080808"
     )
@@ -30,7 +29,7 @@ def generate_nonce_gen_vectors():
         "0101010101010101010101010101010101010101010101010101010101010101"
     )
     secnonce, pubnonce = nonce_gen_internal(
-        COMMON_RAND, secshares[0], pubshares[0], xonly_thresh_pk, msg, extra_in
+        COMMON_RAND, secshares[0], pubshares[0], thresh_pk, msg, extra_in
     )
     vectors["valid_tests"].append(
         {
@@ -39,7 +38,7 @@ def generate_nonce_gen_vectors():
             "rand": bytes_to_hex(COMMON_RAND),
             "secshare": bytes_to_hex(secshares[0]),
             "pubshare": bytes_to_hex(pubshares[0]),
-            "thresh_pk_xonly": bytes_to_hex(xonly_thresh_pk),
+            "thresh_pk": bytes_to_hex(thresh_pk),
             "msg": bytes_to_hex(msg),
             "extra_in": bytes_to_hex(extra_in),
             "expected": [bytes_to_hex(secnonce), bytes_to_hex(pubnonce)],
@@ -51,7 +50,7 @@ def generate_nonce_gen_vectors():
         COMMON_RAND,
         secshares[0],
         pubshares[0],
-        xonly_thresh_pk,
+        thresh_pk,
         COMMON_MSGS[1],
         extra_in,
     )
@@ -62,7 +61,7 @@ def generate_nonce_gen_vectors():
             "rand": bytes_to_hex(COMMON_RAND),
             "secshare": bytes_to_hex(secshares[0]),
             "pubshare": bytes_to_hex(pubshares[0]),
-            "thresh_pk_xonly": bytes_to_hex(xonly_thresh_pk),
+            "thresh_pk": bytes_to_hex(thresh_pk),
             "msg": bytes_to_hex(COMMON_MSGS[1]),
             "extra_in": bytes_to_hex(extra_in),
             "expected": [bytes_to_hex(secnonce), bytes_to_hex(pubnonce)],
@@ -74,7 +73,7 @@ def generate_nonce_gen_vectors():
         COMMON_RAND,
         secshares[0],
         pubshares[0],
-        xonly_thresh_pk,
+        thresh_pk,
         COMMON_MSGS[2],
         extra_in,
     )
@@ -85,7 +84,7 @@ def generate_nonce_gen_vectors():
             "rand": bytes_to_hex(COMMON_RAND),
             "secshare": bytes_to_hex(secshares[0]),
             "pubshare": bytes_to_hex(pubshares[0]),
-            "thresh_pk_xonly": bytes_to_hex(xonly_thresh_pk),
+            "thresh_pk": bytes_to_hex(thresh_pk),
             "msg": bytes_to_hex(COMMON_MSGS[2]),
             "extra_in": bytes_to_hex(extra_in),
             "expected": [bytes_to_hex(secnonce), bytes_to_hex(pubnonce)],
@@ -101,7 +100,7 @@ def generate_nonce_gen_vectors():
             "rand": bytes_to_hex(COMMON_RAND),
             "secshare": None,
             "pubshare": None,
-            "thresh_pk_xonly": None,
+            "thresh_pk": None,
             "msg": None,
             "extra_in": None,
             "expected": [bytes_to_hex(secnonce), bytes_to_hex(pubnonce)],
@@ -110,7 +109,7 @@ def generate_nonce_gen_vectors():
     tc_id += 1
     # --- Valid Test Case 5 ---
     secnonce, pubnonce = nonce_gen_internal(
-        COMMON_RAND, secshares[0], pubshares[0], xonly_thresh_pk, None, extra_in
+        COMMON_RAND, secshares[0], pubshares[0], thresh_pk, None, extra_in
     )
     vectors["valid_tests"].append(
         {
@@ -119,7 +118,7 @@ def generate_nonce_gen_vectors():
             "rand": bytes_to_hex(COMMON_RAND),
             "secshare": bytes_to_hex(secshares[0]),
             "pubshare": bytes_to_hex(pubshares[0]),
-            "thresh_pk_xonly": bytes_to_hex(xonly_thresh_pk),
+            "thresh_pk": bytes_to_hex(thresh_pk),
             "msg": None,
             "extra_in": bytes_to_hex(extra_in),
             "expected": [bytes_to_hex(secnonce), bytes_to_hex(pubnonce)],
