@@ -11,7 +11,6 @@ from generators.nonce import (
 )
 from generators.sig_agg import generate_sig_agg_vectors
 from generators.sign_verify import generate_sign_verify_vectors
-from generators.tweak import generate_tweak_vectors
 
 
 def create_vectors_directory():
@@ -40,7 +39,6 @@ def main():
         run_gen_vectors("generate_nonce_gen_vectors", generate_nonce_gen_vectors),
         run_gen_vectors("generate_nonce_agg_vectors", generate_nonce_agg_vectors),
         run_gen_vectors("generate_sign_verify_vectors", generate_sign_verify_vectors),
-        run_gen_vectors("generate_tweak_vectors", generate_tweak_vectors),
         run_gen_vectors("generate_det_sign_vectors", generate_det_sign_vectors),
         run_gen_vectors("generate_sig_agg_vectors", generate_sig_agg_vectors),
     ]

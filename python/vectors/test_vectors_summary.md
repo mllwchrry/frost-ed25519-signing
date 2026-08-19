@@ -11,7 +11,6 @@ the files.
 | `nonce_gen_vectors.json` | `nonce_gen_internal` | `valid_tests` |
 | `nonce_agg_vectors.json` | `nonce_agg` | `valid_tests`, `error_tests` |
 | `sign_verify_vectors.json` | `sign`, `partial_sig_verify` | `valid_tests`, `sign_error_tests`, `verify_fail_tests`, `verify_error_tests` |
-| `tweak_vectors.json` | `sign` with tweaks | `valid_tests`, `error_tests` |
 | `det_sign_vectors.json` | `deterministic_sign` | `valid_tests`, `error_tests` |
 | `sig_agg_vectors.json` | `partial_sig_agg` | `valid_tests`, `error_tests` |
 
@@ -20,7 +19,7 @@ the files.
 Most files don't repeat shared inputs inside every test case. Instead each file
 groups its cases under a `test_groups` array, one group per `(t, n)`
 configuration, and every group carries the key setup and the inputs it shares
-(`pubshares`, `pubnonces`, `secshares`, `secnonces`, `tweaks`). A case points into those shared inputs by index: a
+(`pubshares`, `pubnonces`, `secshares`, `secnonces`). A case points into those shared inputs by index: a
 field named `<thing>_index` picks one entry, and `<thing>_indices` picks an
 ordered set. So to run a case, read its group's shared inputs, look up the
 case's indices in them, and call the function with the values you get back.
@@ -45,11 +44,6 @@ A few things stay out of that scheme:
   `det_sign`), and the signer's own id (`my_id`). In `det_sign`,
   `aggothernonce` is `null` when the session has a single signer, so
   there are no other nonces to aggregate.
-- `tweaks` and `is_xonly` are parallel lists: position `k` in `is_xonly` says
-  whether tweak `k` is x-only. They mirror the API, which takes the two as
-  separate arguments. `tweak_vectors` keeps its tweak values in a shared input
-  and selects them with `tweak_indices`, while `det_sign` inlines its `tweaks`
-  list directly in the case.
 - A case's expected output stays inline, in its `expected` field.
 
 `nonce_gen` and `nonce_agg` skip the `test_groups` wrapper. `nonce_gen` is
@@ -118,7 +112,7 @@ is an id value, while both `signer_index` fields are positions in a list.
 
 | Field | Where | What it is |
 |---|---|---|
-| `my_id` | sign-side cases (`sign`, `deterministic_sign`, tweak) | The signer's id value. Pass it straight to the function. |
+| `my_id` | sign-side cases (`sign`, `deterministic_sign`) | The signer's id value. Pass it straight to the function. |
 | `signer_index` | verify-side cases (`verify_fail`, `verify_error`) | The signer's position in the case's `ids` list, passed as the index argument to `partial_sig_verify`. |
 | `error.signer_index` | inside an `error` object | The position of the blamed contribution in the input list, or `null` for an aggregator-level fault. |
 

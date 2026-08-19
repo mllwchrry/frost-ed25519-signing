@@ -19,7 +19,6 @@ from .signing import (
     PlainPk,
     XonlyPk,
     SignersContext,
-    TweakContext,
     SessionContext,
 )
 
@@ -38,6 +37,5 @@ __all__ = [
     "PlainPk",
     "XonlyPk",
     "SignersContext",
-    "TweakContext",
     "SessionContext",
 ]

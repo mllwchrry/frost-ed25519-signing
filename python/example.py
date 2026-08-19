@@ -17,12 +17,9 @@ from frost_ref import (
     SignersContext,
     SessionContext,
     PlainPk,
+    XonlyPk,
 )
-from frost_ref.signing import (
-    thresh_pubkey_and_tweak,
-    get_xonly_pk,
-    partial_sig_verify_internal,
-)
+from frost_ref.signing import partial_sig_verify_internal
 
 from secp256k1lab.bip340 import schnorr_verify
 from trusted_dealer import trusted_dealer_keygen
@@ -104,8 +101,6 @@ async def participant(
     pubshare: PlainPk,
     my_id: int,
     signers_ctx: SignersContext,
-    tweaks: List[bytes],
-    is_xonly: List[bool],
     msg: bytes,
 ) -> Tuple[bytes, bytes]:
     """
@@ -114,17 +109,15 @@ async def participant(
     Returns:
         (psig, final_sig): Partial signature and final BIP340 signature
     """
-    # Get tweaked threshold pubkey
-    tweak_ctx = thresh_pubkey_and_tweak(signers_ctx.thresh_pk, tweaks, is_xonly)
-    tweaked_thresh_pk = get_xonly_pk(tweak_ctx)
+    thresh_pk_xonly = XonlyPk(signers_ctx.thresh_pk[1:])
 
     # Round 1: Nonce generation
-    secnonce, pubnonce = nonce_gen(secshare, pubshare, tweaked_thresh_pk, msg, None)
+    secnonce, pubnonce = nonce_gen(secshare, pubshare, thresh_pk_xonly, msg, None)
     chan.send(pubnonce)
     aggnonce = await chan.receive()
 
     # Round 2: Signing
-    session_ctx = SessionContext(signers_ctx, aggnonce, tweaks, is_xonly, msg)
+    session_ctx = SessionContext(signers_ctx, aggnonce, msg)
     psig = sign(secnonce, secshare, my_id, session_ctx)
     assert partial_sig_verify_internal(psig, my_id, pubnonce, pubshare, session_ctx), (
         "Partial signature verification failed"
@@ -139,8 +132,6 @@ async def participant(
 async def coordinator(
     chans: CoordinatorChannels,
     signers_ctx: SignersContext,
-    tweaks: List[bytes],
-    is_xonly: List[bool],
     msg: bytes,
 ) -> bytes:
     """
@@ -164,13 +155,13 @@ async def coordinator(
     chans.send_all(aggnonce)
 
     # Round 2: Collect partial signatures
-    session_ctx = SessionContext(signers_ctx, aggnonce, tweaks, is_xonly, msg)
+    session_ctx = SessionContext(signers_ctx, aggnonce, msg)
     psigs = []
     for i in range(num_signers):
         psig = await chans.receive_from(i)
-        assert partial_sig_verify(
-            psig, pubnonces, signers_ctx, tweaks, is_xonly, msg, i
-        ), f"Partial signature verification failed for singer {i}"
+        assert partial_sig_verify(psig, pubnonces, signers_ctx, msg, i), (
+            f"Partial signature verification failed for singer {i}"
+        )
         psigs.append(psig)
 
     # Aggregate partial signatures
@@ -189,8 +180,6 @@ def simulate_frost_signing(
     secshares: List[bytes],
     signers_ctx: SignersContext,
     msg: bytes,
-    tweaks: List[bytes],
-    is_xonly: List[bool],
 ) -> Tuple[bytes, List[bytes]]:
     """Run a full FROST signing session.
 
@@ -213,15 +202,13 @@ def simulate_frost_signing(
         )
 
         # Create coroutines
-        coroutines = [coordinator(coord_chans, signers_ctx, tweaks, is_xonly, msg)] + [
+        coroutines = [coordinator(coord_chans, signers_ctx, msg)] + [
             participant(
                 participant_chans[i],
                 secshares[i],
                 pubshares[i],
                 signer_ids[i],
                 signers_ctx,
-                tweaks,
-                is_xonly,
                 msg,
             )
             for i in range(num_signers)
@@ -275,31 +262,15 @@ def main():
     print()
     signers_ctx = SignersContext(n, t, signer_ids, signer_pubshares, thresh_pk)
 
-    # 4. Create message and tweaks
+    # 4. Create message
     msg = secrets.token_bytes(32)
 
-    # Apply both plain (BIP32-style) and xonly (BIP341-style) tweaks
-    tweaks = [secrets.token_bytes(32), secrets.token_bytes(32)]
-    is_xonly = [False, True]  # First: plain (BIP32), Second: xonly (BIP341)
-
-    tweak_ctx = thresh_pubkey_and_tweak(thresh_pk, tweaks, is_xonly)
-    tweaked_thresh_pk = get_xonly_pk(tweak_ctx)
-
-    print("=== Message and Tweaks ===")
+    print("=== Message ===")
     print(f"Message: {msg.hex()}")
-    print(f"Tweak 1 (plain/BIP32): {tweaks[0].hex()}")
-    print(f"Tweak 2 (xonly/BIP341): {tweaks[1].hex()}")
-    print(f"Tweaked threshold public key: {tweaked_thresh_pk.hex()}")
     print()
 
     # 5. Run signing protocol
-    final_sig, psigs = simulate_frost_signing(
-        signer_secshares,
-        signers_ctx,
-        msg,
-        tweaks,
-        is_xonly,
-    )
+    final_sig, psigs = simulate_frost_signing(signer_secshares, signers_ctx, msg)
 
     print("=== Participants Partial Signatures ===")
     for i, psig in enumerate(psigs):
@@ -311,7 +282,7 @@ def main():
     print()
 
     # 6. Verify signature
-    assert schnorr_verify(msg, tweaked_thresh_pk, final_sig)
+    assert schnorr_verify(msg, thresh_pk[1:], final_sig)
     print("=== Verification ===")
     print("Signature verified successfully!")
 

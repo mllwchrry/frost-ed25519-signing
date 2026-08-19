@@ -10,10 +10,8 @@ from frost_ref.signing import nonce_gen_internal
 
 from generators.common import (
     COMMON_MSGS,
-    COMMON_TWEAKS,
     CONFIGS,
     AGGNONCE_WRONG_TAG,
-    OUT_OF_RANGE_TWEAK,
     SharedGroupInputs,
     assign_tc_ids,
     bytes_list_to_hex,
@@ -106,8 +104,6 @@ class DetSignGroupBuilder:
         pubshare_indices: List[int],
         aux_rand: Optional[bytes],
         msg: bytes,
-        tweaks: List[bytes],
-        is_xonly: List[bool],
         comment: str,
     ) -> None:
         curr_aggothernonce = self._derive_aggothernonce(ids, my_id, msg, aux_rand)
@@ -119,8 +115,6 @@ class DetSignGroupBuilder:
             my_id,
             curr_aggothernonce,
             signers,
-            tweaks,
-            is_xonly,
             msg,
             aux_rand,
         )
@@ -136,8 +130,6 @@ class DetSignGroupBuilder:
                 else None,
                 "aux_rand": bytes_to_hex(aux_rand) if aux_rand is not None else None,
                 "msg": bytes_to_hex(msg),
-                "tweaks": bytes_list_to_hex(tweaks),
-                "is_xonly": is_xonly,
                 "expected": bytes_list_to_hex(list(result)),
             }
         )
@@ -150,8 +142,6 @@ class DetSignGroupBuilder:
         secshare_index: int,
         aux_rand: Optional[bytes],
         msg: bytes,
-        tweaks: List[bytes],
-        is_xonly: List[bool],
         error: str,
         comment: str,
         aggothernonce: Optional[bytes] = None,
@@ -172,8 +162,6 @@ class DetSignGroupBuilder:
                 my_id,
                 curr_aggothernonce,
                 signers,
-                tweaks,
-                is_xonly,
                 msg,
                 aux_rand,
             ),
@@ -191,8 +179,6 @@ class DetSignGroupBuilder:
                 else None,
                 "aux_rand": bytes_to_hex(aux_rand) if aux_rand is not None else None,
                 "msg": bytes_to_hex(msg),
-                "tweaks": bytes_list_to_hex(tweaks),
-                "is_xonly": is_xonly,
                 "error": err,
             }
         )
@@ -208,8 +194,6 @@ class DetSignGroupBuilder:
             self.min_s,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "Minimum threshold subset of signers",
         )
         # reordering (needs a set of size >= 2 to be meaningful, matching sign_verify).
@@ -221,8 +205,6 @@ class DetSignGroupBuilder:
                 rev,
                 RANDS[0],
                 COMMON_MSGS[0],
-                [],
-                [],
                 "Reordering the signer set leaves the deterministic output unchanged, because the identifiers are sorted before they are bound into the nonce derivation and the binding value",
             )
         # a different threshold subset (needs t >= 2; at t=1 alt collapses to the
@@ -234,8 +216,6 @@ class DetSignGroupBuilder:
                 self.alt,
                 RANDS[0],
                 COMMON_MSGS[0],
-                [],
-                [],
                 "A different threshold subset gives a different deterministic nonce, since the signer set is bound into the nonce derivation",
             )
         # null randomness.
@@ -245,8 +225,6 @@ class DetSignGroupBuilder:
             self.min_s,
             RANDS[1],
             COMMON_MSGS[0],
-            [],
-            [],
             "Auxiliary randomness omitted (null), which is not equivalent to all-zeros randomness",
         )
         # all-ones randomness.
@@ -256,8 +234,6 @@ class DetSignGroupBuilder:
             self.min_s,
             RANDS[2],
             COMMON_MSGS[0],
-            [],
-            [],
             "Auxiliary randomness is all ones, distinct from the all-zeros and omitted cases",
         )
         # all signers, non-first member signs.
@@ -267,8 +243,6 @@ class DetSignGroupBuilder:
             self.full,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "All signers participate, signed by a non-first member of the signer set",
         )
         # empty message.
@@ -278,8 +252,6 @@ class DetSignGroupBuilder:
             self.min_s,
             RANDS[0],
             COMMON_MSGS[1],
-            [],
-            [],
             "Empty message",
         )
         # non-standard message length.
@@ -289,20 +261,7 @@ class DetSignGroupBuilder:
             self.min_s,
             RANDS[0],
             COMMON_MSGS[2],
-            [],
-            [],
             "Non-standard message length (38 bytes)",
-        )
-        # single x-only tweak.
-        self._append_valid(
-            0,
-            self.min_s,
-            self.min_s,
-            RANDS[0],
-            COMMON_MSGS[0],
-            [COMMON_TWEAKS[0]],
-            [True],
-            "Single x-only tweak applied",
         )
 
     # --- Array B: error_tests ---
@@ -318,8 +277,6 @@ class DetSignGroupBuilder:
                 0,
                 RANDS[0],
                 COMMON_MSGS[0],
-                [],
-                [],
                 "value",
                 "Signer's identifier is absent from the signer set",
             )
@@ -331,8 +288,6 @@ class DetSignGroupBuilder:
             0,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "value",
             "Signer set contains a duplicate id",
         )
@@ -346,8 +301,6 @@ class DetSignGroupBuilder:
                 0,
                 RANDS[0],
                 COMMON_MSGS[0],
-                [],
-                [],
                 "value",
                 "Signer's public share is not in the public share list",
             )
@@ -363,8 +316,6 @@ class DetSignGroupBuilder:
             0,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "value",
             "A public share is not a valid point",
         )
@@ -382,8 +333,6 @@ class DetSignGroupBuilder:
                 1,
                 RANDS[0],
                 COMMON_MSGS[0],
-                [],
-                [],
                 "value",
                 "A signer id is outside the valid range [0, n-1]",
             )
@@ -395,8 +344,6 @@ class DetSignGroupBuilder:
                 0,
                 RANDS[0],
                 COMMON_MSGS[0],
-                [],
-                [],
                 "value",
                 "A signer id is outside the valid range [0, n-1]",
             )
@@ -411,8 +358,6 @@ class DetSignGroupBuilder:
                 0,
                 RANDS[0],
                 COMMON_MSGS[0],
-                [],
-                [],
                 "value",
                 "Signer set's public shares do not match the threshold public key",
             )
@@ -424,8 +369,6 @@ class DetSignGroupBuilder:
             0,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "invalid_contrib",
             "Aggregate of the other signers' nonces is invalid: first half has an unknown tag 0x04",
             aggothernonce=AGGNONCE_WRONG_TAG,
@@ -437,8 +380,6 @@ class DetSignGroupBuilder:
             0,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "invalid_contrib",
             "Aggregate of the other signers' nonces is invalid: first half is all zeros",
             aggothernonce=AGGOTHERNONCE_FIRST_HALF_ZERO,
@@ -450,8 +391,6 @@ class DetSignGroupBuilder:
             0,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "invalid_contrib",
             "Aggregate of the other signers' nonces is invalid: second half is not a point on the curve",
             aggothernonce=AGGOTHERNONCE_BAD_POINT,
@@ -463,24 +402,9 @@ class DetSignGroupBuilder:
             0,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "invalid_contrib",
             "Aggregate of the other signers' nonces is invalid: second half's x-coordinate exceeds the field size",
             aggothernonce=AGGOTHERNONCE_EXCEEDS_FIELD,
-        )
-        # tweak exceeds the group order.
-        self._append_error(
-            0,
-            self.min_s,
-            self.min_s,
-            0,
-            RANDS[0],
-            COMMON_MSGS[0],
-            [OUT_OF_RANGE_TWEAK],
-            [False],
-            "value",
-            "Tweak exceeds the group order",
         )
         # Fewer signers than the threshold (empty set at t=1).
         below = list(range(t - 1))
@@ -491,8 +415,6 @@ class DetSignGroupBuilder:
             0,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "value",
             "Fewer signers than the threshold t",
         )
@@ -504,8 +426,6 @@ class DetSignGroupBuilder:
             self.inputs.SECSHARE_ZERO_IDX,
             RANDS[0],
             COMMON_MSGS[0],
-            [],
-            [],
             "value",
             "Secret share is out of range (zero)",
         )
