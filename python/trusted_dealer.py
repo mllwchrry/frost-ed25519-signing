@@ -2,7 +2,7 @@
 
 # WARNING: Do not use this as an implementation reference. This trusted dealer is
 # only used to generate the FROST keys needed for signing in the test vectors, and
-# it is insecure (see secp256k1lab). Do not use it in production.
+# it is insecure (see ed25519lab). Do not use it in production.
 
 # Implementation of the Trusted Dealer Key Generation approach for FROST mentioned
 # in https://datatracker.ietf.org/doc/draft-irtf-cfrg-frost/15/ (Appendix D).
@@ -15,13 +15,23 @@ from typing import Tuple, List
 import unittest
 import secrets
 
-from secp256k1lab.secp256k1 import G, GE, Scalar
-from secp256k1lab.util import tagged_hash
+from ed25519lab.ed25519 import B, GE, Scalar
+from ed25519lab.util import tagged_hash
 from frost_ref.signing import derive_interpolating_value
 from frost_ref import PlainPk
 
 
-COEFF_DERIVATION_TAG = "BIP0445/trusted/keygen"
+COEFF_DERIVATION_TAG = "FROST3-ed25519-v1/trusted/keygen"
+
+
+def random_seckey() -> bytes:
+    """Sample a uniform canonical scalar in [1, L), as 32 little-endian bytes.
+
+    On Ed25519 a random 32-byte value is a canonical scalar (< L) only ~1/16 of
+    the time, so callers that need a seckey must sample it this way rather than
+    passing secrets.token_bytes(32) directly.
+    """
+    return Scalar(int.from_bytes(secrets.token_bytes(32), "little")).to_bytes()
 
 
 # evaluates poly using Horner's method, assuming coeff[0] corresponds
@@ -61,16 +71,17 @@ def trusted_dealer_keygen(
 ) -> Tuple[PlainPk, List[bytes], List[PlainPk]]:
     assert 1 <= t <= n
 
+    # thresh_sk_ is a canonical scalar in [1, L) (rejected otherwise); callers
+    # must sample it canonically (see random_seckey).
     thresh_sk = Scalar.from_bytes_nonzero_checked(thresh_sk_)
-    # Key generation protocols are allowed to generate plain public keys (i.e., non-xonly)
-    thresh_pk_ = thresh_sk * G
+    thresh_pk_ = thresh_sk * B
     assert not thresh_pk_.infinity
     thresh_pk = PlainPk(thresh_pk_.to_bytes_compressed())
 
     # Derive coefficient i deterministically from the threshold secret and the
     # index, so the same input always yields the same shares.
     coeffs = [
-        Scalar.from_bytes_nonzero_checked(
+        Scalar.from_bytes_wide(
             tagged_hash(COEFF_DERIVATION_TAG, thresh_sk_ + i.to_bytes(4, "big"))
         )
         for i in range(1, t)
@@ -79,7 +90,7 @@ def trusted_dealer_keygen(
     secshares_ = secret_share_shard(thresh_sk, coeffs, n)
     secshares = [x.to_bytes() for x in secshares_]
 
-    pubshares_ = [x * G for x in secshares_]
+    pubshares_ = [x * B for x in secshares_]
     pubshares = [PlainPk(X.to_bytes_compressed()) for X in pubshares_]
 
     return (thresh_pk, secshares, pubshares)
@@ -129,7 +140,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(secret_share_combine(secshares, [0, 1, 2]), expected_secret)
 
     def test_trusted_dealer_keygen(self) -> None:
-        thresh_sk_ = secrets.token_bytes(32)
+        thresh_sk_ = random_seckey()
         n = 5
         t = 3
         thresh_pk_, secshares_, pubshares_ = trusted_dealer_keygen(thresh_sk_, n, t)
@@ -139,23 +150,23 @@ class Tests(unittest.TestCase):
         secshares = [Scalar.from_bytes_nonzero_checked(s) for s in secshares_]
         pubshares = [GE.from_bytes_compressed(p) for p in pubshares_]
 
-        self.assertEqual(thresh_pk, thresh_sk * G)
+        self.assertEqual(thresh_pk, thresh_sk * B)
 
         self.assertEqual(secret_share_combine(secshares, list(range(n))), thresh_sk)
         self.assertEqual(len(secshares), n)
         self.assertEqual(len(pubshares), n)
         for i in range(len(pubshares)):
             with self.subTest(i=i):
-                self.assertEqual(pubshares[i], secshares[i] * G)
+                self.assertEqual(pubshares[i], secshares[i] * B)
 
     def test_trusted_dealer_keygen_deterministic(self) -> None:
-        thresh_sk_ = secrets.token_bytes(32)
+        thresh_sk_ = random_seckey()
         first = trusted_dealer_keygen(thresh_sk_, 5, 3)
         second = trusted_dealer_keygen(thresh_sk_, 5, 3)
         self.assertEqual(first, second)
 
     def test_trusted_dealer_keygen_threshold_one(self) -> None:
-        thresh_sk_ = secrets.token_bytes(32)
+        thresh_sk_ = random_seckey()
         thresh_pk_, secshares_, pubshares_ = trusted_dealer_keygen(thresh_sk_, 3, 1)
 
         # Degree-0 polynomial: every share equals the threshold secret, and every

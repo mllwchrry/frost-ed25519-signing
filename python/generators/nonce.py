@@ -1,15 +1,19 @@
 from frost_ref import InvalidContributionError, nonce_agg
 from frost_ref.signing import nonce_gen_internal
 
+from ed25519lab.ed25519 import B, Scalar
+
 from generators.common import (
     COMMON_MSGS,
     COMMON_RAND,
+    NONCANONICAL_POINT,
+    OFFCURVE_POINT,
     SECKEY_2OF3,
+    TORSION_POINT,
     bytes_list_to_hex,
     bytes_to_hex,
     expect_exception,
     frost_keygen,
-    hex_list_to_bytes,
     write_test_vectors,
 )
 
@@ -133,21 +137,28 @@ def generate_nonce_agg_vectors():
     vectors = {}
 
     # Special pubnonce indices for test cases
-    INVALID_TAG_IDX = 4
-    INVALID_XCOORD_IDX = 5
-    INVALID_EXCEEDS_FIELD_IDX = 6
+    FIRST_HALF_NONCANONICAL_IDX = 4
+    SECOND_HALF_OFFCURVE_IDX = 5
+    SECOND_HALF_TORSION_IDX = 6
 
-    pubnonces = hex_list_to_bytes(
-        [
-            "020151C80F435648DF67A22B749CD798CE54E0321D034B92B709B567D60A42E66603BA47FBC1834437B3212E89A84D8425E7BF12E0245D98262268EBDCB385D50641",
-            "03FF406FFD8ADB9CD29877E4985014F66A59F6CD01C0E88CAA8E5F3166B1F676A60248C264CDD57D3C24D79990B0F865674EB62A0F9018277A95011B41BFC193B833",
-            "020151C80F435648DF67A22B749CD798CE54E0321D034B92B709B567D60A42E6660279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798",
-            "03FF406FFD8ADB9CD29877E4985014F66A59F6CD01C0E88CAA8E5F3166B1F676A60379BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798",
-            "04FF406FFD8ADB9CD29877E4985014F66A59F6CD01C0E88CAA8E5F3166B1F676A60248C264CDD57D3C24D79990B0F865674EB62A0F9018277A95011B41BFC193B833",
-            "03FF406FFD8ADB9CD29877E4985014F66A59F6CD01C0E88CAA8E5F3166B1F676A60248C264CDD57D3C24D79990B0F865674EB62A0F9018277A95011B41BFC193B831",
-            "03FF406FFD8ADB9CD29877E4985014F66A59F6CD01C0E88CAA8E5F3166B1F676A602FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30",
-        ]
-    )
+    # Constructed Ed25519 pubnonces (each 64 bytes = two 32-byte points). The
+    # first four are well-formed; the last three each carry a different invalid
+    # half so nonce_agg rejects them (non-canonical / off-curve / torsion).
+    # Indices 2 and 3 have second halves that are negatives of each other, so
+    # their aggregate second half is the identity point.
+    def _pt(k):
+        return (Scalar(k) * B).to_bytes_compressed()
+
+    _P = Scalar(7) * B
+    pubnonces = [
+        _pt(2) + _pt(3),
+        _pt(4) + _pt(5),
+        _pt(6) + _P.to_bytes_compressed(),
+        _pt(8) + (-_P).to_bytes_compressed(),
+        NONCANONICAL_POINT + _pt(9),
+        _pt(10) + OFFCURVE_POINT,
+        _pt(11) + TORSION_POINT,
+    ]
     vectors["pubnonces"] = bytes_list_to_hex(pubnonces)
 
     tc_id = 1
@@ -172,7 +183,7 @@ def generate_nonce_agg_vectors():
     vectors["valid_tests"].append(
         {
             "tc_id": tc_id,
-            "comment": "Second halves sum to the point at infinity, which is serialized as the all-zero encoding",
+            "comment": "Second halves sum to the identity element",
             "pubnonce_indices": pubnonce_indices,
             "expected": bytes_to_hex(aggnonce),
         }
@@ -181,7 +192,7 @@ def generate_nonce_agg_vectors():
 
     vectors["error_tests"] = []
     # --- Error Test Case 1 ---
-    pubnonce_indices = [0, INVALID_TAG_IDX]
+    pubnonce_indices = [0, FIRST_HALF_NONCANONICAL_IDX]
     curr_pubnonces = [pubnonces[i] for i in pubnonce_indices]
     error = expect_exception(
         lambda: nonce_agg(curr_pubnonces), InvalidContributionError
@@ -189,14 +200,14 @@ def generate_nonce_agg_vectors():
     vectors["error_tests"].append(
         {
             "tc_id": tc_id,
-            "comment": "Public nonce is invalid: first half has an unknown tag 0x04",
+            "comment": "Public nonce is invalid: first half's y-coordinate exceeds the field size",
             "pubnonce_indices": pubnonce_indices,
             "error": error,
         }
     )
     tc_id += 1
     # --- Error Test Case 2 ---
-    pubnonce_indices = [INVALID_XCOORD_IDX, 1]
+    pubnonce_indices = [SECOND_HALF_OFFCURVE_IDX, 1]
     curr_pubnonces = [pubnonces[i] for i in pubnonce_indices]
     error = expect_exception(
         lambda: nonce_agg(curr_pubnonces), InvalidContributionError
@@ -211,7 +222,7 @@ def generate_nonce_agg_vectors():
     )
     tc_id += 1
     # --- Error Test Case 3 ---
-    pubnonce_indices = [INVALID_EXCEEDS_FIELD_IDX, 1]
+    pubnonce_indices = [SECOND_HALF_TORSION_IDX, 1]
     curr_pubnonces = [pubnonces[i] for i in pubnonce_indices]
     error = expect_exception(
         lambda: nonce_agg(curr_pubnonces), InvalidContributionError
@@ -219,7 +230,7 @@ def generate_nonce_agg_vectors():
     vectors["error_tests"].append(
         {
             "tc_id": tc_id,
-            "comment": "Public nonce is invalid: second half's x-coordinate exceeds the field size",
+            "comment": "Public nonce is invalid: second half is not in the prime-order subgroup",
             "pubnonce_indices": pubnonce_indices,
             "error": error,
         }

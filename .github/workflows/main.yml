@@ -62,7 +62,7 @@ jobs:
         run: mypy --no-error-summary .
       - name: mypy (strict frost_ref)
         working-directory: python
-        run: mypy --no-error-summary --strict --untyped-calls-exclude=secp256k1lab -p frost_ref --follow-imports=silent
+        run: mypy --no-error-summary --strict -p frost_ref --follow-imports=silent
   reference_implementation_tests:
     runs-on: ubuntu-latest
     steps:
@@ -87,5 +87,5 @@ jobs:
           python-version: 3.11
       - name: Run Trusted Dealer unit tests
         env:
-          PYTHONPATH: ./python:./python/secp256k1lab/src
+          PYTHONPATH: ./python:./python/ed25519lab/src
         run: python3 -m unittest python.trusted_dealer
