@@ -10,7 +10,7 @@ from frost_ref.signing import (
     nonce_agg,
     nonce_gen_internal,
 )
-from ed25519lab.ed25519 import B, GE, Scalar
+from ed25519lab.ed25519 import B, FE, GE, Scalar
 from ed25519lab.keys import pubkey_gen
 from trusted_dealer import random_seckey, trusted_dealer_keygen
 
@@ -93,6 +93,18 @@ INVALID_PUBNONCE = OFFCURVE_POINT + B.to_bytes_compressed()
 
 # Aggregate nonce whose first half is a non-canonical point (second half valid).
 AGGNONCE_BAD_FIRST_HALF = NONCANONICAL_POINT + B.to_bytes_compressed()
+
+# A mixed-order point P = [k]B + T: on the curve and canonically encoded, but off
+# the prime-order subgroup, so the [L]P == O check rejects it. This is the case a
+# small-order-only screen ([8]P == O, i.e. dalek's verify_strict) would miss.
+# Here T = GE(FE(0), FE(-1)) is the order-2 torsion point (0, -1).
+MIXED_ORDER_POINT = ((Scalar(5) * B) + GE(FE(0), FE(-1))).to_bytes_compressed()
+
+# The single non-canonical identity encoding: x == 0 with the sign bit set.
+NONCANONICAL_IDENTITY = bytes([1]) + bytes(30) + bytes([0x80])
+
+# The canonical identity encoding (0x01 || 31 zero bytes).
+CANONICAL_IDENTITY = bytes([1]) + bytes(31)
 
 
 _SCALAR_TOKEN = r"-?\d+|true|false|null"
@@ -193,9 +205,11 @@ class SharedGroupInputs:
             COMMON_RAND, secshares, pubshares, PlainPk(thresh_pk)
         )
 
-        # pubshares pool: off-curve point at slot n, then a valid point at slot n+1
-        # (the last secshare shifted so the lambda-weighted sum over min2_ids is
-        # zero) that makes the min2 signer set interpolate to the point at infinity.
+        # pubshares pool: a non-canonical point at slot n, then a valid point at
+        # slot n+1 (the last secshare shifted so the lambda-weighted sum over
+        # min2_ids is zero) that makes the min2 signer set interpolate to the point
+        # at infinity, then five fault points at slots n+2..n+6 (small-order,
+        # mixed-order, non-canonical identity, canonical identity, off-curve).
         min2_ids = list(range(max(t, 2)))
         lam_last = derive_interpolating_value(min2_ids, min2_ids[-1])
         thresh_sk = reconstruct_thresh_sk(min2_ids, [secshares[i] for i in min2_ids])
@@ -205,6 +219,11 @@ class SharedGroupInputs:
         self.pool_pubshares = pubshares + [
             PlainPk(INVALID_PUBSHARE),
             PlainPk((cancel_sk * B).to_bytes_compressed()),
+            PlainPk(TORSION_POINT),
+            PlainPk(MIXED_ORDER_POINT),
+            PlainPk(NONCANONICAL_IDENTITY),
+            PlainPk(CANONICAL_IDENTITY),
+            PlainPk(OFFCURVE_POINT),
         ]
         # secshares pool: zero scalar at slot n.
         self.pool_secshares = secshares + [b"\x00" * 32]
@@ -227,6 +246,11 @@ class SharedGroupInputs:
         # named offsets into the pools, all derived from n
         self.INVALID_PUBSHARE_IDX = n
         self.INFINITY_PUBSHARE_IDX = n + 1
+        self.SMALL_ORDER_PUBSHARE_IDX = n + 2
+        self.MIXED_ORDER_PUBSHARE_IDX = n + 3
+        self.NONCANONICAL_IDENTITY_PUBSHARE_IDX = n + 4
+        self.CANONICAL_IDENTITY_PUBSHARE_IDX = n + 5
+        self.OFFCURVE_PUBSHARE_IDX = n + 6
         self.SECSHARE_ZERO_IDX = n
         self.INVALID_PUBNONCE_IDX = n
         self.INVERSE_PUBNONCE_IDX = n + 1

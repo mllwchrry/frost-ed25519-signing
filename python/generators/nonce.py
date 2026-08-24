@@ -4,8 +4,11 @@ from frost_ref.signing import nonce_gen_internal
 from ed25519lab.ed25519 import B, Scalar
 
 from generators.common import (
+    CANONICAL_IDENTITY,
     COMMON_MSGS,
     COMMON_RAND,
+    MIXED_ORDER_POINT,
+    NONCANONICAL_IDENTITY,
     NONCANONICAL_POINT,
     OFFCURVE_POINT,
     SECKEY_2OF3,
@@ -140,12 +143,16 @@ def generate_nonce_agg_vectors():
     FIRST_HALF_NONCANONICAL_IDX = 4
     SECOND_HALF_OFFCURVE_IDX = 5
     SECOND_HALF_TORSION_IDX = 6
+    SECOND_HALF_MIXED_ORDER_IDX = 7
+    SECOND_HALF_NONCANONICAL_IDENTITY_IDX = 8
+    SECOND_HALF_CANONICAL_IDENTITY_IDX = 9
 
     # Constructed Ed25519 pubnonces (each 64 bytes = two 32-byte points). The
-    # first four are well-formed; the last three each carry a different invalid
-    # half so nonce_agg rejects them (non-canonical / off-curve / torsion).
-    # Indices 2 and 3 have second halves that are negatives of each other, so
-    # their aggregate second half is the identity point.
+    # first four are well-formed; the last six each carry a different invalid
+    # half so nonce_agg rejects them (non-canonical / off-curve / small-order /
+    # mixed-order / non-canonical identity / canonical identity). Indices 2 and 3
+    # have second halves that are negatives of each other, so their aggregate
+    # second half is the identity point.
     def _pt(k):
         return (Scalar(k) * B).to_bytes_compressed()
 
@@ -158,6 +165,9 @@ def generate_nonce_agg_vectors():
         NONCANONICAL_POINT + _pt(9),
         _pt(10) + OFFCURVE_POINT,
         _pt(11) + TORSION_POINT,
+        _pt(12) + MIXED_ORDER_POINT,
+        _pt(13) + NONCANONICAL_IDENTITY,
+        _pt(14) + CANONICAL_IDENTITY,
     ]
     vectors["pubnonces"] = bytes_list_to_hex(pubnonces)
 
@@ -230,7 +240,52 @@ def generate_nonce_agg_vectors():
     vectors["error_tests"].append(
         {
             "tc_id": tc_id,
-            "comment": "Public nonce is invalid: second half is not in the prime-order subgroup",
+            "comment": "Public nonce is invalid: second half is a small-order point",
+            "pubnonce_indices": pubnonce_indices,
+            "error": error,
+        }
+    )
+    tc_id += 1
+    # --- Error Test Case 4 ---
+    pubnonce_indices = [SECOND_HALF_MIXED_ORDER_IDX, 1]
+    curr_pubnonces = [pubnonces[i] for i in pubnonce_indices]
+    error = expect_exception(
+        lambda: nonce_agg(curr_pubnonces), InvalidContributionError
+    )
+    vectors["error_tests"].append(
+        {
+            "tc_id": tc_id,
+            "comment": "Public nonce is invalid: second half is a mixed-order point",
+            "pubnonce_indices": pubnonce_indices,
+            "error": error,
+        }
+    )
+    tc_id += 1
+    # --- Error Test Case 5 ---
+    pubnonce_indices = [SECOND_HALF_NONCANONICAL_IDENTITY_IDX, 1]
+    curr_pubnonces = [pubnonces[i] for i in pubnonce_indices]
+    error = expect_exception(
+        lambda: nonce_agg(curr_pubnonces), InvalidContributionError
+    )
+    vectors["error_tests"].append(
+        {
+            "tc_id": tc_id,
+            "comment": "Public nonce is invalid: second half is the non-canonical identity encoding",
+            "pubnonce_indices": pubnonce_indices,
+            "error": error,
+        }
+    )
+    tc_id += 1
+    # --- Error Test Case 6 ---
+    pubnonce_indices = [SECOND_HALF_CANONICAL_IDENTITY_IDX, 1]
+    curr_pubnonces = [pubnonces[i] for i in pubnonce_indices]
+    error = expect_exception(
+        lambda: nonce_agg(curr_pubnonces), InvalidContributionError
+    )
+    vectors["error_tests"].append(
+        {
+            "tc_id": tc_id,
+            "comment": "Public nonce is invalid: second half is the identity element",
             "pubnonce_indices": pubnonce_indices,
             "error": error,
         }

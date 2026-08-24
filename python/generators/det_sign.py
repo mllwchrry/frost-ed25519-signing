@@ -15,6 +15,8 @@ from generators.common import (
     COMMON_MSGS,
     CONFIGS,
     AGGNONCE_BAD_FIRST_HALF,
+    MIXED_ORDER_POINT,
+    NONCANONICAL_IDENTITY,
     NONCANONICAL_POINT,
     OFFCURVE_POINT,
     TORSION_POINT,
@@ -46,6 +48,10 @@ AGGOTHERNONCE_FIRST_HALF_ZERO = TORSION_POINT + B.to_bytes_compressed()
 AGGOTHERNONCE_OFFCURVE = B.to_bytes_compressed() + OFFCURVE_POINT
 # Second half is a non-canonical encoding (y >= p).
 AGGOTHERNONCE_NONCANONICAL = B.to_bytes_compressed() + NONCANONICAL_POINT
+# Second half is a mixed-order point [k]B + T, off the prime-order subgroup.
+AGGOTHERNONCE_MIXED_ORDER = B.to_bytes_compressed() + MIXED_ORDER_POINT
+# Second half is the non-canonical identity encoding (x == 0 with the sign bit set).
+AGGOTHERNONCE_NONCANONICAL_IDENTITY = B.to_bytes_compressed() + NONCANONICAL_IDENTITY
 
 
 class DetSignGroupBuilder:
@@ -308,21 +314,44 @@ class DetSignGroupBuilder:
                 "value",
                 "Signer's public share is not in the public share list",
             )
-        # off-curve pubshare at position 1 (min2 forces size >= 2).
-        pubshare_indices_offcurve = [
-            self.min2[0],
-            self.inputs.INVALID_PUBSHARE_IDX,
-        ] + self.min2[2:]
-        self._append_error(
-            0,
-            self.min2,
-            pubshare_indices_offcurve,
-            0,
-            RANDS[0],
-            COMMON_MSGS[0],
-            "value",
-            "A public share is not a valid point",
-        )
+        # A listed public share is non-canonical or off the prime-order subgroup
+        # (at position 1, so min2 forces size >= 2), one fault class per case.
+        for idx, comment in [
+            (
+                self.inputs.INVALID_PUBSHARE_IDX,
+                "A public share's y-coordinate exceeds the field size",
+            ),
+            (
+                self.inputs.SMALL_ORDER_PUBSHARE_IDX,
+                "A public share is a small-order point",
+            ),
+            (
+                self.inputs.MIXED_ORDER_PUBSHARE_IDX,
+                "A public share is a mixed-order point",
+            ),
+            (
+                self.inputs.NONCANONICAL_IDENTITY_PUBSHARE_IDX,
+                "A public share is the non-canonical identity encoding",
+            ),
+            (
+                self.inputs.CANONICAL_IDENTITY_PUBSHARE_IDX,
+                "A public share is the identity element",
+            ),
+            (
+                self.inputs.OFFCURVE_PUBSHARE_IDX,
+                "A public share is not a point on the curve",
+            ),
+        ]:
+            self._append_error(
+                0,
+                self.min2,
+                [self.min2[0], idx] + self.min2[2:],
+                0,
+                RANDS[0],
+                COMMON_MSGS[0],
+                "value",
+                comment,
+            )
         # A signer id equals n, outside the valid range. For t >= 2 an in-range
         # member signs. At t=1 the lone id is out of range and the check fires
         # first, so the self fields are inert. This assumes signer-id range
@@ -385,7 +414,7 @@ class DetSignGroupBuilder:
             RANDS[0],
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate of the other signers' nonces is invalid: first half is the all-zero encoding, an order-4 torsion point",
+            "Aggregate of the other signers' nonces is invalid: first half is a small-order point (the all-zero order-4 torsion encoding)",
             aggothernonce=AGGOTHERNONCE_FIRST_HALF_ZERO,
         )
         self._append_error(
@@ -409,6 +438,28 @@ class DetSignGroupBuilder:
             "invalid_contrib",
             "Aggregate of the other signers' nonces is invalid: second half's y-coordinate exceeds the field size",
             aggothernonce=AGGOTHERNONCE_NONCANONICAL,
+        )
+        self._append_error(
+            0,
+            self.min2,
+            self.min2,
+            0,
+            RANDS[0],
+            COMMON_MSGS[0],
+            "invalid_contrib",
+            "Aggregate of the other signers' nonces is invalid: second half is a mixed-order point",
+            aggothernonce=AGGOTHERNONCE_MIXED_ORDER,
+        )
+        self._append_error(
+            0,
+            self.min2,
+            self.min2,
+            0,
+            RANDS[0],
+            COMMON_MSGS[0],
+            "invalid_contrib",
+            "Aggregate of the other signers' nonces is invalid: second half is the non-canonical identity encoding",
+            aggothernonce=AGGOTHERNONCE_NONCANONICAL_IDENTITY,
         )
         # Fewer signers than the threshold (empty set at t=1).
         below = list(range(t - 1))
