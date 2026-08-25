@@ -1,0 +1,28 @@
+[package]
+name = "oracle_dalek"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone cross-check oracle: reads the cross-check cases as JSON on stdin,
+# emits ed25519-dalek's verify (permissive) and verify_strict (Solana) verdicts
+# per case on stdout. Not part of the fork's build; run via run_crosscheck.py.
+
+# default-features = false + features = ["fast", "std"] keeps ed25519-dalek to the
+# verify-only surface (its optional pkcs8/pem/serde features stay off). Hygiene,
+# not the fix: the pins below are what let it build on the local stable Cargo.
+[dependencies]
+ed25519-dalek = { version = "2", default-features = false, features = ["fast", "std"] }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# base64ct and zeroize are pulled transitively; their latest releases require
+# edition2024 / Rust 1.85, newer than the local stable Cargo, so pin older
+# versions that are still semver-compatible with what the graph asks for.
+base64ct = "=1.6.0"
+zeroize = "=1.8.1"
+
+[[bin]]
+name = "oracle_dalek"
+path = "src/main.rs"
