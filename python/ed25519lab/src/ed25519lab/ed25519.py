@@ -28,7 +28,7 @@ Ed25519 (RFC 8032). It is stated here once and is not encoded in any method
 name. Identifiers, lengths and counts that go *inside* hash inputs are
 big-endian; that mixing is intentional and is the caller's responsibility.
 
-STRICTNESS: GE.from_bytes_compressed implements RFC 8032 section 5.1.3 decoding
+STRICTNESS: GE.from_bytes implements RFC 8032 section 5.1.3 decoding
 plus a prime-order-subgroup check. It is deliberately stricter than every
 standard Ed25519 library: it rejects non-canonical encodings, small-order points
 and mixed-order points. That divergence is pinned by test vectors.
@@ -261,7 +261,7 @@ class GE:
 
     Unlike the short Weierstrass case there is no separate point-at-infinity
     representation: the neutral element is the ordinary curve point (0, 1) with
-    an ordinary 32-byte encoding. GE() constructs it, and the .infinity property
+    an ordinary 32-byte encoding. GE() constructs it, and the .is_identity property
     reports it.
 
     Coordinates are held as FE objects, which keep a numerator/denominator form
@@ -294,7 +294,7 @@ class GE:
         Used only for the output of the addition law, which is closed over the
         curve: adding two curve points always yields a curve point, so checking
         again is pure cost. Every point that enters the library from outside
-        goes through the public constructor or from_bytes_compressed, both of
+        goes through the public constructor or from_bytes, both of
         which do check. test_addition_output_is_always_on_the_curve pins this.
         """
         obj = cls.__new__(cls)
@@ -311,7 +311,7 @@ class GE:
         return self._y
 
     @property
-    def infinity(self) -> bool:
+    def is_identity(self) -> bool:
         """Whether this is the neutral element (0, 1).
 
         Both coordinates are checked. Testing only x == 0 would also match
@@ -349,6 +349,12 @@ class GE:
         Multiplication by the generator takes the precomputed-table path; every
         other point takes plain double-and-add. See FastGEMul for what that does
         and, more importantly, does not speed up.
+
+        WARNING: an int operand is reduced mod L before the multiplication.
+        That is correct only for points in the prime-order subgroup. On a
+        torsion point it gives the wrong answer -- GE.ORDER * T is the identity
+        for an order-2 T, while [L]T is not. Use _mul_int for any computation
+        that must see the true order.
         """
         if isinstance(a, Scalar):
             k = int(a)
@@ -368,7 +374,7 @@ class GE:
         return self._x == a._x and self._y == a._y
 
     def __hash__(self) -> int:
-        return hash(self.to_bytes_compressed())
+        return hash(self.to_bytes_with_identity())
 
     @staticmethod
     def sum(*ps: GE) -> GE:
@@ -391,19 +397,34 @@ class GE:
 
     # -- encoding -----------------------------------------------------------
 
-    def to_bytes_compressed(self) -> bytes:
+    def to_bytes_with_identity(self) -> bytes:
         """Encode as 32 bytes: little-endian y, with the sign of x in bit 255.
 
-        The neutral element encodes as 0x01 followed by 31 zero bytes. There is
-        deliberately no to_bytes_compressed_with_infinity variant: the neutral
-        element has a native encoding here and needs no sentinel.
+        Permissive: the identity encodes like any other point, as 0x01 followed
+        by 31 zero bytes -- there is no sentinel, and no counterpart to
+        secp256k1lab's to_bytes_compressed_with_infinity is needed for the
+        FORMAT. Use this only where the identity is a legitimate protocol value
+        (an aggregate nonce whose contributions cancel, a sum of VSS
+        commitments); everywhere else use to_bytes, which refuses it.
         """
         b = bytearray(int(self._y).to_bytes(32, "little"))
         b[31] |= (int(self._x) & 1) << 7
         return bytes(b)
 
+    def to_bytes(self) -> bytes:
+        """Encode as 32 bytes, REFUSING the identity.
+
+        The mirror of from_bytes. Encoding is the last place an identity can be
+        caught at the producer, where blame is local, instead of at some remote
+        decoder or -- worse -- not at all, in a session that succeeds with a
+        degenerate output.
+        """
+        if self.is_identity:
+            raise ValueError("point is the identity")
+        return self.to_bytes_with_identity()
+
     @staticmethod
-    def from_bytes_compressed_with_identity(b: bytes) -> GE:
+    def from_bytes_with_identity(b: bytes) -> GE:
         """Strictly decode 32 bytes, ALLOWING the identity.
 
         RFC 8032 section 5.1.3 decoding plus a prime-order-subgroup check.
@@ -420,7 +441,7 @@ class GE:
         aggregate nonce whose components cancel, or a sum of VSS commitments.
 
         Use this ONLY where the identity is a valid protocol value. Everywhere
-        else use from_bytes_compressed, which is this plus a rejection.
+        else use from_bytes, which is this plus a rejection.
         """
         if len(b) != 32:
             raise ValueError(f"expected 32 bytes, got {len(b)}")
@@ -439,29 +460,29 @@ class GE:
         return p
 
     @staticmethod
-    def from_bytes_compressed(b: bytes) -> GE:
+    def from_bytes(b: bytes) -> GE:
         """Strictly decode 32 bytes, REJECTING the identity.
 
-        Everything from_bytes_compressed_with_identity rejects, plus the
+        Everything from_bytes_with_identity rejects, plus the
         identity itself. This is the default because most wire values -- public
         keys, public shares, individual public nonces -- can never legitimately
         be the identity, and an identity there means a broken or hostile peer.
 
         WHY THIS IS THE DEFAULT AND NOT THE OTHER WAY AROUND. The alternative
-        design is a single permissive decoder plus an explicit `.infinity` check
+        design is a single permissive decoder plus an explicit `.is_identity` check
         at each call site. The failure modes are not symmetric: forgetting the
-        `.infinity` check fails SILENTLY and accepts a value that should have
+        `.is_identity` check fails SILENTLY and accepts a value that should have
         been refused, whereas forgetting to reach for the _with_identity variant
         fails LOUDLY with an exception at the one call site that needed it. The
         strict default puts the quiet mistake out of reach.
         """
-        p = GE.from_bytes_compressed_with_identity(b)
-        if p.infinity:
+        p = GE.from_bytes_with_identity(b)
+        if p.is_identity:
             raise ValueError("point is the identity")
         return p
 
     # -- subgroup -----------------------------------------------------------
-
+    
     def in_prime_order_subgroup(self) -> bool:
         """Whether [L]P is the neutral element.
 
@@ -469,14 +490,19 @@ class GE:
         received point, not per session. A production port can substitute
         Pornin's point-halving check (eprint 2022/1164); the predicate is
         identical.
+
+        _mul_int, not `self.ORDER * self`, ON PURPOSE: the operator reduces an
+        int operand mod L, so `self.ORDER * self` is always the identity and
+        this predicate would become a tautology. Pinned by
+        ScalarMulReductionTests.
         """
-        return _mul_int(self, self.ORDER).infinity
+        return _mul_int(self, self.ORDER).is_identity
 
     def __str__(self) -> str:
-        return self.to_bytes_compressed().hex()
+        return self.to_bytes_with_identity().hex()
 
     def __repr__(self) -> str:
-        if self.infinity:
+        if self.is_identity:
             return "GE()"
         return f"GE(0x{int(self._x):x}, 0x{int(self._y):x})"
 
@@ -488,6 +514,10 @@ def _recover_x(y: FE, sign: int) -> FE | None:
     encoding being non-canonical, not about the point, so the caller applies it.
     """
     v = 1 + _D * y**2
+    # Unreachable: v == 0 needs y**2 == -1/d, and -1/d is a non-square mod p --
+    # the same property of d that makes the addition law complete. Kept because
+    # without it a zero denominator would surface as a confusing inversion
+    # error instead of None. Consequently this line is not coverable.
     if v == 0:
         return None
     x = ((y**2 - 1) / v).sqrt()
@@ -529,7 +559,7 @@ class FastGEMul:
     WHAT THIS DOES NOT SPEED UP -- worth knowing before optimising anything
     around it. The prime-order-subgroup check computes [L]P on an ARBITRARY
     point, so no table applies and it is untouched. Since that check is ~98% of
-    the cost of GE.from_bytes_compressed, and decoding dominates a ChillDKG
+    the cost of GE.from_bytes, and decoding dominates a ChillDKG
     session, strict decoding gains nothing here. The gain lands on pubkey_gen
     (~3x) and, more modestly, on signing, verification and ECDH (~1.2-1.5x),
     which mix base-point and arbitrary-point multiplications.

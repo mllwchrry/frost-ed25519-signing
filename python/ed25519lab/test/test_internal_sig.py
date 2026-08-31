@@ -90,7 +90,7 @@ class SignVerifyTests(unittest.TestCase):
         self.assertFalse(internal_verify(b"m", self.pk, le(2**255 - 19) + sig[32:]))
 
     def test_identity_is_rejected_at_this_call_site(self):
-        neutral = GE().to_bytes_compressed()
+        neutral = GE().to_bytes_with_identity()
         sig = internal_sign(b"m", self.sk)
         self.assertFalse(internal_verify(b"m", neutral, sig))
         self.assertFalse(internal_verify(b"m", self.pk, neutral + sig[32:]))
@@ -100,9 +100,9 @@ class SignVerifyTests(unittest.TestCase):
 
         msg = b"m"
         sig = internal_sign(msg, self.sk)
-        r = GE.from_bytes_compressed(sig[:32])
+        r = GE.from_bytes(sig[:32])
         t = unchecked_decode(SMALL_ORDER["order 8 (a)"])
-        self.assertFalse(internal_verify(msg, self.pk, (r + t).to_bytes_compressed() + sig[32:]))
+        self.assertFalse(internal_verify(msg, self.pk, (r + t).to_bytes() + sig[32:]))
 
 
 class NotAnEd25519SignatureTests(unittest.TestCase):
@@ -119,8 +119,8 @@ class NotAnEd25519SignatureTests(unittest.TestCase):
 
     def _standard_ed25519_equation_holds(self, msg: bytes) -> bool:
         """[s]B == R + [e]A with the STANDARD challenge, no domain tag."""
-        r = GE.from_bytes_compressed(self.sig[:32])
-        a = GE.from_bytes_compressed(self.pk)
+        r = GE.from_bytes(self.sig[:32])
+        a = GE.from_bytes(self.pk)
         s = Scalar.from_bytes_checked(self.sig[32:])
         e = Scalar.from_bytes_wide(hashlib.sha512(self.sig[:32] + self.pk + msg).digest())
         return s * B == r + e * a

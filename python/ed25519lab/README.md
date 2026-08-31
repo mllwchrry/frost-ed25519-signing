@@ -34,7 +34,7 @@ Differences from a standard Ed25519 library
 
 These are deliberate and are what the library exists for.
 
-* **Strict decoding.** `GE.from_bytes_compressed` rejects non-canonical
+* **Strict decoding.** `GE.from_bytes` rejects non-canonical
   encodings (`y >= p`, and `x == 0` with the sign bit set), all seven
   non-neutral small-order points, and all mixed-order points `[k]B + T`. Every
   standard library accepts most of these.
@@ -75,13 +75,13 @@ These are deliberate and are what the library exists for.
   not a typo.
 * **The identity is an ordinary point, and the decoder is strict by default.**
   `GE()` is `(0, 1)` and encodes as `0x01` followed by 31 zero bytes -- no
-  sentinel. `GE.from_bytes_compressed` refuses it, because most wire values
+  sentinel. `GE.from_bytes` refuses it, because most wire values
   (public keys, public shares, individual public nonces) can never legitimately
   be the identity. Where it IS a real value -- an aggregate nonce whose
   contributions cancel, a sum of VSS commitments -- use
-  `GE.from_bytes_compressed_with_identity`, which is the same decoder minus that
+  `GE.from_bytes_with_identity`, which is the same decoder minus that
   one rejection. Strict by default because the mistakes are asymmetric: a
-  forgotten `.infinity` check fails silently, a forgotten `_with_identity`
+  forgotten `.is_identity` check fails silently, a forgotten `_with_identity`
   raises.
 
 Endianness

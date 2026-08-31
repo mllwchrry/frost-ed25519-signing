@@ -43,15 +43,15 @@ RANDS = [
 # never indexed from a pool), so they stay local to this generator.
 # The all-zero encoding is the order-4 torsion point (rejected by the subgroup
 # check), so "first half is all zeros" is a genuine case, not junk bytes.
-AGGOTHERNONCE_FIRST_HALF_ZERO = TORSION_POINT + B.to_bytes_compressed()
+AGGOTHERNONCE_FIRST_HALF_ZERO = TORSION_POINT + B.to_bytes()
 # Second half is a canonical y with no matching x (off the curve).
-AGGOTHERNONCE_OFFCURVE = B.to_bytes_compressed() + OFFCURVE_POINT
+AGGOTHERNONCE_OFFCURVE = B.to_bytes() + OFFCURVE_POINT
 # Second half is a non-canonical encoding (y >= p).
-AGGOTHERNONCE_NONCANONICAL = B.to_bytes_compressed() + NONCANONICAL_POINT
+AGGOTHERNONCE_NONCANONICAL = B.to_bytes() + NONCANONICAL_POINT
 # Second half is a mixed-order point [k]B + T, off the prime-order subgroup.
-AGGOTHERNONCE_MIXED_ORDER = B.to_bytes_compressed() + MIXED_ORDER_POINT
+AGGOTHERNONCE_MIXED_ORDER = B.to_bytes() + MIXED_ORDER_POINT
 # Second half is the non-canonical identity encoding (x == 0 with the sign bit set).
-AGGOTHERNONCE_NONCANONICAL_IDENTITY = B.to_bytes_compressed() + NONCANONICAL_IDENTITY
+AGGOTHERNONCE_NONCANONICAL_IDENTITY = B.to_bytes() + NONCANONICAL_IDENTITY
 
 
 class DetSignGroupBuilder:

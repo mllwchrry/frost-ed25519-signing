@@ -72,20 +72,20 @@ def internal_sign(msg: bytes, seckey: bytes, aux: bytes = NO_AUX) -> bytes:
         raise ValueError(f"aux must be exactly {AUX_SIZE} bytes, got {len(aux)}")
     d = Scalar.from_bytes_nonzero_checked(seckey)
     a = d * B
-    assert not a.infinity
+    assert not a.is_identity
 
     k = Scalar.from_bytes_wide(tagged_hash(TAG_NONCE, d.to_bytes(), aux, msg))
     if k == 0:
         raise RuntimeError("Failure. This happens only with negligible probability.")
     r = k * B
-    assert not r.infinity
+    assert not r.is_identity
 
     e = Scalar.from_bytes_wide(
-        tagged_hash(TAG_CHALLENGE, r.to_bytes_compressed(), a.to_bytes_compressed(), msg)
+        tagged_hash(TAG_CHALLENGE, r.to_bytes(), a.to_bytes(), msg)
     )
     s = k + e * d
-    sig = r.to_bytes_compressed() + s.to_bytes()
-    assert internal_verify(msg, a.to_bytes_compressed(), sig)
+    sig = r.to_bytes() + s.to_bytes()
+    assert internal_verify(msg, a.to_bytes(), sig)
     return sig
 
 
@@ -96,7 +96,7 @@ def internal_verify(msg: bytes, pubkey: bytes, sig: bytes) -> bool:
 
         [s]B == R + [e]A
 
-    Every point here arrives through GE.from_bytes_compressed, which enforces
+    Every point here arrives through GE.from_bytes, which enforces
     the prime-order subgroup, so the cofactored form would accept exactly the
     same set -- but writing the cofactorless one keeps a single verification
     equation across the whole protocol and matches what Solana enforces for the
@@ -104,7 +104,7 @@ def internal_verify(msg: bytes, pubkey: bytes, sig: bytes) -> bool:
 
     IDENTITY. A is [d]B with d nonzero and R is [k]B with k nonzero, so neither
     can legitimately be the identity here; an identity means a broken or
-    malicious signer. from_bytes_compressed already refuses it, so this function
+    malicious signer. from_bytes already refuses it, so this function
     needs no separate check -- the rejection lands in the except below.
     """
     if len(pubkey) != 32:
@@ -112,8 +112,8 @@ def internal_verify(msg: bytes, pubkey: bytes, sig: bytes) -> bool:
     if len(sig) != 64:
         raise ValueError("The signature must be a 64-byte array.")
     try:
-        a = GE.from_bytes_compressed(pubkey)
-        r = GE.from_bytes_compressed(sig[0:32])
+        a = GE.from_bytes(pubkey)
+        r = GE.from_bytes(sig[0:32])
         s = Scalar.from_bytes_checked(sig[32:64])
     except ValueError:
         return False

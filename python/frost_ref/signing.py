@@ -73,9 +73,9 @@ def derive_thresh_pubkey(ids: List[int], pubshares: List[GE]) -> PlainPk:
     for my_id, X_i in zip(ids, pubshares):
         lam_i = derive_interpolating_value(ids, my_id)
         A += lam_i * X_i
-    if A.infinity:
+    if A.is_identity:
         raise ValueError("The threshold pubkey must not be the identity element.")
-    return PlainPk(A.to_bytes_compressed())
+    return PlainPk(A.to_bytes())
 
 
 class SignersContext(NamedTuple):
@@ -101,7 +101,7 @@ def validate_signers_ctx(signers_ctx: SignersContext) -> None:
                 f"The participant identifier at index {idx} is out of range."
             )
         try:
-            P = GE.from_bytes_compressed(pubshare)
+            P = GE.from_bytes(pubshare)
         except ValueError:
             # A malformed pubshare is invalid pre-protocol input, not a protocol
             # contribution: the signers context is agreed upon before signing
@@ -173,9 +173,9 @@ def nonce_gen_internal(
     assert k_2 != 0
     R1_partial = k_1 * B
     R2_partial = k_2 * B
-    assert not R1_partial.infinity
-    assert not R2_partial.infinity
-    pubnonce = R1_partial.to_bytes_compressed() + R2_partial.to_bytes_compressed()
+    assert not R1_partial.is_identity
+    assert not R2_partial.is_identity
+    pubnonce = R1_partial.to_bytes() + R2_partial.to_bytes()
     # use mutable `bytearray` since secnonce need to be replaced with zeros during signing.
     secnonce = bytearray(k_1.to_bytes() + k_2.to_bytes())
     return secnonce, pubnonce
@@ -204,11 +204,11 @@ def nonce_agg(pubnonces: List[bytes]) -> bytes:
         R_j = GE()
         for idx, pubnonce in enumerate(pubnonces):
             try:
-                R_ij = GE.from_bytes_compressed(pubnonce[(j - 1) * 32 : j * 32])
+                R_ij = GE.from_bytes(pubnonce[(j - 1) * 32 : j * 32])
             except ValueError:
                 raise InvalidContributionError(idx, "pubnonce")
             R_j += R_ij
-        aggnonce += R_j.to_bytes_compressed()
+        aggnonce += R_j.to_bytes_with_identity()
     return aggnonce
 
 
@@ -224,23 +224,19 @@ def get_session_values(
     (signers_ctx, aggnonce, msg) = session_ctx
     validate_signers_ctx(signers_ctx)
     _, _, ids, pubshares, thresh_pk = signers_ctx
-    A = GE.from_bytes_compressed(thresh_pk)
+    A = GE.from_bytes(thresh_pk)
     # sort the ids before serializing because ROAST paper considers them as a set
     ser_ids = serialize_ids(ids)
     b = Scalar.from_bytes_wide(
         tagged_hash(
             FROST_TAG_NONCECOEF,
-            len(ids).to_bytes(4, "big")
-            + ser_ids
-            + aggnonce
-            + A.to_bytes_compressed()
-            + msg,
+            len(ids).to_bytes(4, "big") + ser_ids + aggnonce + A.to_bytes() + msg,
         )
     )
     assert b != 0
     try:
-        R1 = GE.from_bytes_compressed_with_identity(aggnonce[0:32])
-        R2 = GE.from_bytes_compressed_with_identity(aggnonce[32:64])
+        R1 = GE.from_bytes_with_identity(aggnonce[0:32])
+        R2 = GE.from_bytes_with_identity(aggnonce[32:64])
     except ValueError:
         # coordinator sent invalid aggnonce
         raise InvalidContributionError(None, "aggnonce")
@@ -249,11 +245,9 @@ def get_session_values(
     # Ed25519 the identity point is encodable, but Solana's verifier rejects a small-
     # order R, so an identity-R signature could never verify; substituting B
     # keeps blame attribution runnable via partial_sig_verify.
-    R = R_ if not R_.infinity else B
-    assert not R.infinity
-    e = Scalar.from_bytes_wide(
-        hash_sha512(R.to_bytes_compressed() + A.to_bytes_compressed() + msg)
-    )
+    R = R_ if not R_.is_identity else B
+    assert not R.is_identity
+    e = Scalar.from_bytes_wide(hash_sha512(R.to_bytes() + A.to_bytes() + msg))
     assert e != 0
     return (ids, pubshares, b, R, e)
 
@@ -286,8 +280,8 @@ def sign(
     except ValueError:
         raise ValueError("The signer's secret share value is out of range.")
     P = d * B
-    assert not P.infinity
-    my_pubshare = P.to_bytes_compressed()
+    assert not P.is_identity
+    my_pubshare = P.to_bytes()
     if my_pubshare not in pubshares:
         raise ValueError(
             "The signer's pubshare must be included in the list of pubshares."
@@ -301,9 +295,9 @@ def sign(
     psig = s.to_bytes()
     R1_partial = k_1 * B
     R2_partial = k_2 * B
-    assert not R1_partial.infinity
-    assert not R2_partial.infinity
-    pubnonce = R1_partial.to_bytes_compressed() + R2_partial.to_bytes_compressed()
+    assert not R1_partial.is_identity
+    assert not R2_partial.is_identity
+    pubnonce = R1_partial.to_bytes() + R2_partial.to_bytes()
     # Optional correctness check. The result of signing should pass signature verification.
     assert partial_sig_verify_internal(psig, my_id, pubnonce, my_pubshare, session_ctx)
     return psig
@@ -366,9 +360,9 @@ def deterministic_sign(
 
     R1_partial = k_1 * B
     R2_partial = k_2 * B
-    assert not R1_partial.infinity
-    assert not R2_partial.infinity
-    pubnonce = R1_partial.to_bytes_compressed() + R2_partial.to_bytes_compressed()
+    assert not R1_partial.is_identity
+    assert not R2_partial.is_identity
+    pubnonce = R1_partial.to_bytes() + R2_partial.to_bytes()
     secnonce = bytearray(k_1.to_bytes() + k_2.to_bytes())
     if aggothernonce is None:
         aggnonce = pubnonce
@@ -418,13 +412,13 @@ def partial_sig_verify_internal(
     if my_id not in ids:
         return False
     try:
-        R1_partial = GE.from_bytes_compressed(pubnonce[0:32])
-        R2_partial = GE.from_bytes_compressed(pubnonce[32:64])
+        R1_partial = GE.from_bytes(pubnonce[0:32])
+        R2_partial = GE.from_bytes(pubnonce[32:64])
     except ValueError:
         return False
     Re_s = R1_partial + b * R2_partial
     try:
-        P = GE.from_bytes_compressed(pubshare)
+        P = GE.from_bytes(pubshare)
     except ValueError:
         return False
     a = derive_interpolating_value(ids, my_id)
@@ -442,4 +436,4 @@ def partial_sig_agg(psigs: List[bytes], session_ctx: SessionContext) -> bytes:
         except ValueError:
             raise InvalidContributionError(idx, "psig")
         s += s_i
-    return R.to_bytes_compressed() + s.to_bytes()
+    return R.to_bytes() + s.to_bytes()

@@ -24,8 +24,8 @@ def sign_standard(msg: bytes, d: Scalar, k: Scalar) -> tuple[bytes, bytes]:
     """
     a = d * B
     r = k * B
-    pubkey = a.to_bytes_compressed()
-    r_enc = r.to_bytes_compressed()
+    pubkey = a.to_bytes()
+    r_enc = r.to_bytes()
     e = Scalar.from_bytes_wide(hashlib.sha512(r_enc + pubkey + msg).digest())
     return pubkey, r_enc + (k + e * d).to_bytes()
 
@@ -75,7 +75,7 @@ class RoundTripTests(unittest.TestCase):
                 self.assertFalse(ed25519_verify(self.msg, self.pk, bytes(tampered)))
 
     def test_wrong_key_fails(self):
-        other = (Scalar(randint(1, L - 1)) * B).to_bytes_compressed()
+        other = (Scalar(randint(1, L - 1)) * B).to_bytes()
         self.assertFalse(ed25519_verify(self.msg, other, self.sig))
 
     def test_malformed_lengths_return_false_rather_than_raising(self):
@@ -117,11 +117,11 @@ class StrictnessTests(unittest.TestCase):
                 self.assertFalse(ed25519_verify(self.msg, enc, self.sig))
 
     def test_neutral_element_is_rejected_explicitly(self):
-        neutral = GE().to_bytes_compressed()
+        neutral = GE().to_bytes_with_identity()
         # Refused by the strict decoder itself, not by a separate check.
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed(neutral)
-        self.assertTrue(GE.from_bytes_compressed_with_identity(neutral).infinity)
+            GE.from_bytes(neutral)
+        self.assertTrue(GE.from_bytes_with_identity(neutral).is_identity)
         self.assertFalse(ed25519_verify(self.msg, neutral, self.sig))
         self.assertFalse(ed25519_verify(self.msg, self.pk, neutral + self.sig[32:]))
 
@@ -139,12 +139,12 @@ def forge_mixed_order_pubkey():
     """
     a = Scalar(0x1234567)
     t = unchecked_decode(SMALL_ORDER["order 8 (a)"])
-    pk_mixed = (a * B + t).to_bytes_compressed()
+    pk_mixed = (a * B + t).to_bytes()
     msg = b"grind"
     for k_int in range(1, 500):
         k = Scalar(k_int)
         r = k * B
-        r_enc = r.to_bytes_compressed()
+        r_enc = r.to_bytes()
         e = Scalar.from_bytes_wide(hashlib.sha512(r_enc + pk_mixed + msg).digest())
         if int(e) % 8 == 0:
             return msg, pk_mixed, r_enc + (k + e * a).to_bytes(), a, t, r, e
@@ -174,7 +174,7 @@ class KnownDivergenceFromDalekTests(unittest.TestCase):
         # The forged key really is mixed order: not in the prime-order subgroup,
         # and not small order either, so dalek's own filter does not catch it.
         self.assertFalse(big_a.in_prime_order_subgroup())
-        self.assertFalse((8 * big_a).infinity)
+        self.assertFalse((8 * big_a).is_identity)
 
         # The cofactorless equation nevertheless holds.
         s = Scalar.from_bytes_checked(sig[32:])
@@ -183,7 +183,7 @@ class KnownDivergenceFromDalekTests(unittest.TestCase):
         # And we still say no, because A never survives decoding.
         self.assertFalse(ed25519_verify(msg, pk_mixed, sig))
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed(pk_mixed)
+            GE.from_bytes(pk_mixed)
 
 
 if __name__ == "__main__":

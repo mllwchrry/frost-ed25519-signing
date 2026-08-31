@@ -5,7 +5,7 @@
 Initial curve and scalar layer.
 
 * `FE`, `Scalar`, `GE`, `B` in `ed25519lab.ed25519`.
-* `GE.from_bytes_compressed` does RFC 8032 section 5.1.3 decoding plus a
+* `GE.from_bytes` does RFC 8032 section 5.1.3 decoding plus a
   prime-order-subgroup check, rejecting non-canonical encodings, small-order
   points and mixed-order points.
 * `Scalar.from_bytes_wide` replaces secp256k1lab's `Scalar.from_bytes_wrapping`,
@@ -22,12 +22,12 @@ Initial curve and scalar layer.
   where this library uses SHA-512 so that only one hash function is needed
   anywhere. The caller's remaining obligation is unchanged: at most one part may
   be variable-length and it must be last.
-* `GE.from_bytes_compressed` now REJECTS the identity, and
-  `GE.from_bytes_compressed_with_identity` is the variant that accepts it, for
+* `GE.from_bytes` now REJECTS the identity, and
+  `GE.from_bytes_with_identity` is the variant that accepts it, for
   the call sites where the identity is a real protocol value -- an aggregate
   nonce whose contributions cancel, a sum of VSS commitments. This reverses the
-  earlier "delete the variant, check `.infinity` per call site" design. The
-  failure modes are not symmetric: a forgotten `.infinity` check accepts a value
+  earlier "delete the variant, check `.is_identity` per call site" design. The
+  failure modes are not symmetric: a forgotten `.is_identity` check accepts a value
   that should have been refused and does so SILENTLY, while a forgotten
   `_with_identity` raises at the one site that needed it. Strict by default puts
   the quiet mistake out of reach.

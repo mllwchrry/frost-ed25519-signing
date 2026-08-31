@@ -156,11 +156,8 @@ def test_sign_verify_vectors():
             assert pubshares[i] == PlainPk(pubkey_gen(secshares[i]))
         k_1 = int_from_bytes(secnonces[0][0:32])
         k_2 = int_from_bytes(secnonces[0][32:64])
-        assert not (k_1 * B).infinity and not (k_2 * B).infinity
-        assert (
-            pubnonces[0]
-            == (k_1 * B).to_bytes_compressed() + (k_2 * B).to_bytes_compressed()
-        )
+        assert not (k_1 * B).is_identity and not (k_2 * B).is_identity
+        assert pubnonces[0] == (k_1 * B).to_bytes() + (k_2 * B).to_bytes()
 
         for tc in group["valid_tests"]:
             ids_tmp = tc["ids"]

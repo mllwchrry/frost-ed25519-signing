@@ -193,7 +193,7 @@
                 },
                 {
                     "tc_id": 12,
-                    "comment": "Public shares of the signer set interpolate to the point at infinity",
+                    "comment": "Public shares of the signer set interpolate to the identity",
                     "my_id": 0,
                     "ids": [0, 1],
                     "pubshare_indices": [0, 4],
@@ -679,7 +679,7 @@
                 },
                 {
                     "tc_id": 43,
-                    "comment": "Public shares of the signer set interpolate to the point at infinity",
+                    "comment": "Public shares of the signer set interpolate to the identity",
                     "my_id": 0,
                     "ids": [0, 1],
                     "pubshare_indices": [0, 4],
@@ -1148,7 +1148,7 @@
                 },
                 {
                     "tc_id": 73,
-                    "comment": "Public shares of the signer set interpolate to the point at infinity",
+                    "comment": "Public shares of the signer set interpolate to the identity",
                     "my_id": 0,
                     "ids": [0, 1, 2],
                     "pubshare_indices": [0, 1, 4],
@@ -1683,7 +1683,7 @@
                 },
                 {
                     "tc_id": 107,
-                    "comment": "Public shares of the signer set interpolate to the point at infinity",
+                    "comment": "Public shares of the signer set interpolate to the identity",
                     "my_id": 0,
                     "ids": [0, 1, 2],
                     "pubshare_indices": [0, 1, 6],

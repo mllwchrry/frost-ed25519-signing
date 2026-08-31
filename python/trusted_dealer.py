@@ -75,8 +75,8 @@ def trusted_dealer_keygen(
     # must sample it canonically (see random_seckey).
     thresh_sk = Scalar.from_bytes_nonzero_checked(thresh_sk_)
     thresh_pk_ = thresh_sk * B
-    assert not thresh_pk_.infinity
-    thresh_pk = PlainPk(thresh_pk_.to_bytes_compressed())
+    assert not thresh_pk_.is_identity
+    thresh_pk = PlainPk(thresh_pk_.to_bytes())
 
     # Derive coefficient i deterministically from the threshold secret and the
     # index, so the same input always yields the same shares.
@@ -91,7 +91,7 @@ def trusted_dealer_keygen(
     secshares = [x.to_bytes() for x in secshares_]
 
     pubshares_ = [x * B for x in secshares_]
-    pubshares = [PlainPk(X.to_bytes_compressed()) for X in pubshares_]
+    pubshares = [PlainPk(X.to_bytes()) for X in pubshares_]
 
     return (thresh_pk, secshares, pubshares)
 
@@ -146,9 +146,9 @@ class Tests(unittest.TestCase):
         thresh_pk_, secshares_, pubshares_ = trusted_dealer_keygen(thresh_sk_, n, t)
 
         thresh_sk = Scalar.from_bytes_nonzero_checked(thresh_sk_)
-        thresh_pk = GE.from_bytes_compressed(thresh_pk_)
+        thresh_pk = GE.from_bytes(thresh_pk_)
         secshares = [Scalar.from_bytes_nonzero_checked(s) for s in secshares_]
-        pubshares = [GE.from_bytes_compressed(p) for p in pubshares_]
+        pubshares = [GE.from_bytes(p) for p in pubshares_]
 
         self.assertEqual(thresh_pk, thresh_sk * B)
 

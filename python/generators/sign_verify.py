@@ -36,15 +36,15 @@ from generators.common import (
 # never indexed from a pool), so they stay local to this generator.
 # Aggregate nonces with a valid first half and a non-canonical second half.
 # Second half is a canonical y with no matching x (off the curve).
-AGGNONCE_OFFCURVE = B.to_bytes_compressed() + OFFCURVE_POINT
+AGGNONCE_OFFCURVE = B.to_bytes() + OFFCURVE_POINT
 # Second half is a non-canonical encoding (y >= p).
-AGGNONCE_NONCANONICAL = B.to_bytes_compressed() + NONCANONICAL_POINT
+AGGNONCE_NONCANONICAL = B.to_bytes() + NONCANONICAL_POINT
 # Second half is a small-order (order-4 torsion) point, off the prime-order subgroup.
-AGGNONCE_TORSION = B.to_bytes_compressed() + TORSION_POINT
+AGGNONCE_TORSION = B.to_bytes() + TORSION_POINT
 # Second half is a mixed-order point [k]B + T, off the prime-order subgroup.
-AGGNONCE_MIXED_ORDER = B.to_bytes_compressed() + MIXED_ORDER_POINT
+AGGNONCE_MIXED_ORDER = B.to_bytes() + MIXED_ORDER_POINT
 # Second half is the non-canonical identity encoding (x == 0 with the sign bit set).
-AGGNONCE_NONCANONICAL_IDENTITY = B.to_bytes_compressed() + NONCANONICAL_IDENTITY
+AGGNONCE_NONCANONICAL_IDENTITY = B.to_bytes() + NONCANONICAL_IDENTITY
 
 
 class SignVerifyGroupBuilder:
@@ -255,15 +255,17 @@ class SignVerifyGroupBuilder:
             COMMON_MSGS[0],
             "All signers participate, signed by a non-first member of the signer set",
         )
-        # Aggregate nonce is the point at infinity. The inverse pubnonce cancels
-        # the first n-1 real pubnonces, so the aggregate over them is infinity.
-        inf_pubnonce_indices = list(range(n - 1)) + [self.inputs.INVERSE_PUBNONCE_IDX]
+        # Aggregate nonce is the identity. The inverse pubnonce cancels
+        # the first n-1 real pubnonces, so the aggregate over them is the identity.
+        identity_pubnonce_indices = list(range(n - 1)) + [
+            self.inputs.INVERSE_PUBNONCE_IDX
+        ]
         self._append_valid(
             0,
             self.full,
             self.full,
-            inf_pubnonce_indices,
-            self._agg(inf_pubnonce_indices),
+            identity_pubnonce_indices,
+            self._agg(identity_pubnonce_indices),
             COMMON_MSGS[0],
             "Aggregate nonce is the identity point, so the final nonce point falls back to the base point B",
         )
@@ -351,17 +353,17 @@ class SignVerifyGroupBuilder:
         )
         # The crafted pool slot replaces the min2 set's last share, cancelling the
         # interpolation.
-        pubshare_indices_infinity = self.min2[:-1] + [self.inputs.INFINITY_PUBSHARE_IDX]
+        pubshare_indices_identity = self.min2[:-1] + [self.inputs.IDENTITY_PUBSHARE_IDX]
         self._append_sign_error(
             0,
             self.min2,
-            pubshare_indices_infinity,
+            pubshare_indices_identity,
             0,
             0,
             self._agg(self.min2),
             COMMON_MSGS[0],
             "value",
-            "Public shares of the signer set interpolate to the point at infinity",
+            "Public shares of the signer set interpolate to the identity",
         )
         # A signer id equals n, outside the valid range. For t >= 2 an in-range
         # member signs. At t=1 the lone id is out of range and the check fires

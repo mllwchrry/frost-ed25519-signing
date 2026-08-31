@@ -10,7 +10,7 @@ old name names the wrong curve and the wrong library.
 
 Two changes carry real security weight.
 
-STRICT DECODE OF THE PEER KEY. GE.from_bytes_compressed rejects small-order and
+STRICT DECODE OF THE PEER KEY. GE.from_bytes rejects small-order and
 mixed-order points, which closes a small-subgroup attack: a torsioned peer key
 would make the shared point depend on deckey only through deckey mod 8, leaking
 three bits of the long-term decryption key per exchange.
@@ -63,20 +63,20 @@ def ecdh_ed25519(seckey: bytes, pubkey: bytes, context: bytes, sending: bool) ->
     last. See tagged_hash for why that matters.
     """
     d = Scalar.from_bytes_nonzero_checked(seckey)
-    # from_bytes_compressed refuses the identity as well as small- and
+    # from_bytes refuses the identity as well as small- and
     # mixed-order points, which is exactly this call site's policy.
-    peer = GE.from_bytes_compressed(pubkey)
+    peer = GE.from_bytes(pubkey)
 
     shared = d * peer
-    assert not shared.infinity  # d != 0 and peer has prime order
+    assert not shared.is_identity  # d != 0 and peer has prime order
 
-    own = (d * B).to_bytes_compressed()
+    own = (d * B).to_bytes()
     pk_sender, pk_recipient = (own, pubkey) if sending else (pubkey, own)
 
     return Scalar.from_bytes_wide(
         tagged_hash(
             TAG_ECDH,
-            shared.to_bytes_compressed(),
+            shared.to_bytes(),
             pk_sender,
             pk_recipient,
             context,

@@ -9,7 +9,7 @@ spec requires against dalek verify_strict and the ed25519-speccheck vectors.
 import unittest
 from random import randint, seed
 
-from ed25519lab.ed25519 import FE, GE, B, Scalar, _recover_x
+from ed25519lab.ed25519 import FE, GE, B, Scalar, _mul_int, _recover_x
 
 P = FE.SIZE
 L = Scalar.SIZE
@@ -71,7 +71,7 @@ def unchecked_decode(h: str) -> GE:
 
     A library that cannot construct these points cannot generate its own
     negative vectors, which is why GE's constructor accepts any curve point and
-    only from_bytes_compressed is strict.
+    only from_bytes is strict.
     """
     b = bytearray.fromhex(h)
     sign = b[31] >> 7
@@ -85,27 +85,27 @@ def unchecked_decode(h: str) -> GE:
 class SmallOrderTests(unittest.TestCase):
     def test_neutral_is_accepted_only_by_the_with_identity_decoder(self):
         enc = bytes.fromhex(SMALL_ORDER["order 1 (neutral)"])
-        self.assertTrue(GE.from_bytes_compressed_with_identity(enc).infinity)
+        self.assertTrue(GE.from_bytes_with_identity(enc).is_identity)
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed(enc)
+            GE.from_bytes(enc)
 
     def test_all_other_small_order_points_are_rejected(self):
         for name, h in SMALL_ORDER.items():
             if name == "order 1 (neutral)":
                 continue
             with self.subTest(point=name), self.assertRaises(ValueError):
-                GE.from_bytes_compressed(bytes.fromhex(h))
+                GE.from_bytes(bytes.fromhex(h))
 
     def test_small_order_points_really_are_small_order(self):
         for name, h in SMALL_ORDER.items():
             with self.subTest(point=name):
                 t = unchecked_decode(h)
-                self.assertTrue((8 * t).infinity)
-                self.assertFalse(t.in_prime_order_subgroup() and not t.infinity)
+                self.assertTrue((8 * t).is_identity)
+                self.assertFalse(t.in_prime_order_subgroup() and not t.is_identity)
 
 
 class TwoDecodersTests(unittest.TestCase):
-    """from_bytes_compressed is from_bytes_compressed_with_identity plus one
+    """from_bytes is from_bytes_with_identity plus one
     rejection. This pins that they differ on the identity and NOWHERE else --
     if the strict variant ever grew an extra rule, or the permissive one lost
     the subgroup check, this fails."""
@@ -113,14 +113,14 @@ class TwoDecodersTests(unittest.TestCase):
     def _both(self, enc):
         def run(fn):
             try:
-                return ("ok", fn(enc).infinity)
+                return ("ok", fn(enc).is_identity)
             except ValueError:
                 return ("raise", None)
-        return run(GE.from_bytes_compressed_with_identity), run(GE.from_bytes_compressed)
+        return run(GE.from_bytes_with_identity), run(GE.from_bytes)
 
     def test_they_agree_on_everything_except_the_identity(self):
         seed(20)
-        cases = [(Scalar(randint(1, L - 1)) * B).to_bytes_compressed() for _ in range(20)]
+        cases = [(Scalar(randint(1, L - 1)) * B).to_bytes() for _ in range(20)]
         # every small-order encoding EXCEPT the identity, which is the one
         # input the two decoders are supposed to disagree on
         cases += [
@@ -131,8 +131,8 @@ class TwoDecodersTests(unittest.TestCase):
         cases += [(P + i).to_bytes(32, "little") for i in range(3)]
         cases += [b"", b"\x01" * 31, b"\x01" * 33]
         t = unchecked_decode(SMALL_ORDER["order 8 (a)"])
-        cases += [(Scalar(randint(1, L - 1)) * B + t).to_bytes_compressed() for _ in range(5)]
-        neutral = GE().to_bytes_compressed()
+        cases += [(Scalar(randint(1, L - 1)) * B + t).to_bytes() for _ in range(5)]
+        neutral = GE().to_bytes_with_identity()
 
         differed = []
         for enc in cases:
@@ -151,9 +151,9 @@ class TwoDecodersTests(unittest.TestCase):
             if name == "order 1 (neutral)":
                 continue
             with self.subTest(point=name), self.assertRaises(ValueError):
-                GE.from_bytes_compressed_with_identity(bytes.fromhex(h))
+                GE.from_bytes_with_identity(bytes.fromhex(h))
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed_with_identity(P.to_bytes(32, "little"))
+            GE.from_bytes_with_identity(P.to_bytes(32, "little"))
 
 
 class MixedOrderTests(unittest.TestCase):
@@ -167,7 +167,7 @@ class MixedOrderTests(unittest.TestCase):
             for i in range(10):
                 p = Scalar(randint(1, L - 1)) * B + t
                 with self.subTest(torsion=name, i=i), self.assertRaises(ValueError):
-                    GE.from_bytes_compressed(p.to_bytes_compressed())
+                    GE.from_bytes(p.to_bytes())
 
 
 class CanonicalityTests(unittest.TestCase):
@@ -181,7 +181,7 @@ class CanonicalityTests(unittest.TestCase):
                 break
             tried += 1
             with self.subTest(y=f"p+{extra}"), self.assertRaises(ValueError):
-                GE.from_bytes_compressed(y.to_bytes(32, "little"))
+                GE.from_bytes(y.to_bytes(32, "little"))
         self.assertGreater(tried, 0)
 
     def test_non_canonical_neutral_encoding_is_rejected(self):
@@ -190,12 +190,12 @@ class CanonicalityTests(unittest.TestCase):
         b = bytearray(b"\x01" + b"\x00" * 31)
         b[31] |= 0x80
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed(bytes(b))
+            GE.from_bytes(bytes(b))
 
     def test_wrong_length_is_rejected(self):
         for b in (b"", b"\x01" * 31, b"\x01" * 33, b"\x01" * 64):
             with self.subTest(n=len(b)), self.assertRaises(ValueError):
-                GE.from_bytes_compressed(b)
+                GE.from_bytes(b)
 
     def test_y_with_no_x_is_rejected(self):
         # Find a y for which (y^2-1)/(d y^2+1) is not a square.
@@ -206,7 +206,7 @@ class CanonicalityTests(unittest.TestCase):
             if _recover_x(FE(y), 0) is None:
                 found += 1
                 with self.assertRaises(ValueError):
-                    GE.from_bytes_compressed(y.to_bytes(32, "little"))
+                    GE.from_bytes(y.to_bytes(32, "little"))
         self.assertGreater(found, 0)
 
 
@@ -214,13 +214,13 @@ class RFC8032Tests(unittest.TestCase):
     def test_public_keys_decode(self):
         for _, pk, _ in RFC_8032_7_1:
             with self.subTest(pk=pk[:16]):
-                a = GE.from_bytes_compressed(bytes.fromhex(pk))
-                self.assertFalse(a.infinity)
+                a = GE.from_bytes(bytes.fromhex(pk))
+                self.assertFalse(a.is_identity)
 
     def test_signature_r_components_decode(self):
         for _, _, sig in RFC_8032_7_1:
             with self.subTest(sig=sig[:16]):
-                GE.from_bytes_compressed(bytes.fromhex(sig)[:32])
+                GE.from_bytes(bytes.fromhex(sig)[:32])
 
     def test_signature_s_components_are_valid_scalars(self):
         for _, _, sig in RFC_8032_7_1:
@@ -263,7 +263,28 @@ class CofactorTests(unittest.TestCase):
         # because R does not survive parsing.
         t = unchecked_decode(SMALL_ORDER["order 8 (a)"])
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed((self.R + t).to_bytes_compressed())
+            GE.from_bytes((self.R + t).to_bytes())
+
+class ScalarMulReductionTests(unittest.TestCase):
+    """`int * GE` reduces the scalar mod L, which is only correct inside the
+    prime-order subgroup. in_prime_order_subgroup therefore uses _mul_int, and
+    must keep using it: rewriting it as `(self.ORDER * self).is_identity` makes
+    it a tautology -- L mod L == 0, so every point passes -- and silently takes
+    the decode policy, the ECDH argument and verify_strict parity with it."""
+
+    def test_the_operator_reduces_mod_L_but_the_predicate_must_not(self):
+        t = unchecked_decode(SMALL_ORDER["order 2"])
+        self.assertTrue((GE.ORDER * t).is_identity)
+        self.assertFalse(_mul_int(t, GE.ORDER).is_identity)
+        self.assertFalse(t.in_prime_order_subgroup())
+
+    def test_the_two_paths_agree_inside_the_subgroup(self):
+        seed(41)
+        for _ in range(5):
+            p = Scalar(randint(1, L - 1)) * B
+            k = randint(1, 3 * L)
+            with self.subTest(k=k % 97):
+                self.assertEqual(k * p, _mul_int(p, k))
 
 
 if __name__ == "__main__":

@@ -154,14 +154,14 @@ def generate_nonce_agg_vectors():
     # have second halves that are negatives of each other, so their aggregate
     # second half is the identity point.
     def _pt(k):
-        return (Scalar(k) * B).to_bytes_compressed()
+        return (Scalar(k) * B).to_bytes()
 
     _P = Scalar(7) * B
     pubnonces = [
         _pt(2) + _pt(3),
         _pt(4) + _pt(5),
-        _pt(6) + _P.to_bytes_compressed(),
-        _pt(8) + (-_P).to_bytes_compressed(),
+        _pt(6) + _P.to_bytes(),
+        _pt(8) + (-_P).to_bytes(),
         NONCANONICAL_POINT + _pt(9),
         _pt(10) + OFFCURVE_POINT,
         _pt(11) + TORSION_POINT,

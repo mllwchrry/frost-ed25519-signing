@@ -89,16 +89,16 @@ TORSION_POINT = bytes(32)  # in-field, on-curve, but order 4
 INVALID_PUBSHARE = NONCANONICAL_POINT
 
 # Public nonce whose first half is an off-curve point (second half valid).
-INVALID_PUBNONCE = OFFCURVE_POINT + B.to_bytes_compressed()
+INVALID_PUBNONCE = OFFCURVE_POINT + B.to_bytes()
 
 # Aggregate nonce whose first half is a non-canonical point (second half valid).
-AGGNONCE_BAD_FIRST_HALF = NONCANONICAL_POINT + B.to_bytes_compressed()
+AGGNONCE_BAD_FIRST_HALF = NONCANONICAL_POINT + B.to_bytes()
 
 # A mixed-order point P = [k]B + T: on the curve and canonically encoded, but off
 # the prime-order subgroup, so the [L]P == O check rejects it. This is the case a
 # small-order-only screen ([8]P == O, i.e. dalek's verify_strict) would miss.
 # Here T = GE(FE(0), FE(-1)) is the order-2 torsion point (0, -1).
-MIXED_ORDER_POINT = ((Scalar(5) * B) + GE(FE(0), FE(-1))).to_bytes_compressed()
+MIXED_ORDER_POINT = ((Scalar(5) * B) + GE(FE(0), FE(-1))).to_bytes()
 
 # The single non-canonical identity encoding: x == 0 with the sign bit set.
 NONCANONICAL_IDENTITY = bytes([1]) + bytes(30) + bytes([0x80])
@@ -207,8 +207,8 @@ class SharedGroupInputs:
 
         # pubshares pool: a non-canonical point at slot n, then a valid point at
         # slot n+1 (the last secshare shifted so the lambda-weighted sum over
-        # min2_ids is zero) that makes the min2 signer set interpolate to the point
-        # at infinity, then five fault points at slots n+2..n+6 (small-order,
+        # min2_ids is zero) that makes the min2 signer set interpolate to the
+        # identity, then five fault points at slots n+2..n+6 (small-order,
         # mixed-order, non-canonical identity, canonical identity, off-curve).
         min2_ids = list(range(max(t, 2)))
         lam_last = derive_interpolating_value(min2_ids, min2_ids[-1])
@@ -218,7 +218,7 @@ class SharedGroupInputs:
         )
         self.pool_pubshares = pubshares + [
             PlainPk(INVALID_PUBSHARE),
-            PlainPk((cancel_sk * B).to_bytes_compressed()),
+            PlainPk((cancel_sk * B).to_bytes()),
             PlainPk(TORSION_POINT),
             PlainPk(MIXED_ORDER_POINT),
             PlainPk(NONCANONICAL_IDENTITY),
@@ -230,12 +230,12 @@ class SharedGroupInputs:
 
         # pubnonces pool: off-curve nonce at slot n, then the inverse nonce at slot
         # n+1 (negation of the aggregate of the first n-1 real pubnonces). It only
-        # sums to infinity when paired with indices [0..n-2] plus INVERSE_PUBNONCE_IDX.
-        # Any other size n-1 subset yields a non-infinity aggregate.
+        # sums to the identity when paired with indices [0..n-2] plus INVERSE_PUBNONCE_IDX.
+        # Any other size n-1 subset yields a non-identity aggregate.
         tmp = nonce_agg(self.pubnonces[: n - 1])
-        R1 = GE.from_bytes_compressed_with_identity(tmp[0:32])
-        R2 = GE.from_bytes_compressed_with_identity(tmp[32:64])
-        inverse_pubnonce = (-R1).to_bytes_compressed() + (-R2).to_bytes_compressed()
+        R1 = GE.from_bytes_with_identity(tmp[0:32])
+        R2 = GE.from_bytes_with_identity(tmp[32:64])
+        inverse_pubnonce = (-R1).to_bytes() + (-R2).to_bytes()
         self.pool_pubnonces = self.pubnonces + [INVALID_PUBNONCE, inverse_pubnonce]
 
         # secnonces pool: all-zero at slot n, nonzero-first/zero-second at slot n+1.
@@ -245,7 +245,7 @@ class SharedGroupInputs:
 
         # named offsets into the pools, all derived from n
         self.INVALID_PUBSHARE_IDX = n
-        self.INFINITY_PUBSHARE_IDX = n + 1
+        self.IDENTITY_PUBSHARE_IDX = n + 1
         self.SMALL_ORDER_PUBSHARE_IDX = n + 2
         self.MIXED_ORDER_PUBSHARE_IDX = n + 3
         self.NONCANONICAL_IDENTITY_PUBSHARE_IDX = n + 4

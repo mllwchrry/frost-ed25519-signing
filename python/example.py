@@ -73,10 +73,10 @@ def generate_frost_keys(
     """Generate t-of-n FROST keys using trusted dealer.
 
     Returns:
-        thresh_pk: Threshold public key (32-byte compressed)
+        thresh_pk: Threshold public key (32 bytes, RFC 8032 encoding)
         ids: List of signer IDs (0-indexed: 0, 1, ..., n-1)
         secshares: List of secret shares (32-byte scalars)
-        pubshares: List of public shares (32-byte compressed)
+        pubshares: List of public shares (32 bytes, RFC 8032 encoding)
     """
     thresh_pk, secshares, pubshares = trusted_dealer_keygen(random_seckey(), n, t)
 

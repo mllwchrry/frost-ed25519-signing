@@ -21,5 +21,5 @@ def pubkey_gen(seckey: bytes) -> bytes:
     """
     d = Scalar.from_bytes_nonzero_checked(seckey)
     p = d * B
-    assert not p.infinity
-    return p.to_bytes_compressed()
+    assert not p.is_identity
+    return p.to_bytes()

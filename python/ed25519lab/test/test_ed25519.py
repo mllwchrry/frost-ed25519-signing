@@ -135,26 +135,31 @@ class ScalarTests(unittest.TestCase):
 
 class GroupElementTests(unittest.TestCase):
     def test_base_point(self):
-        self.assertEqual(B.to_bytes_compressed(), B_ENC)
+        self.assertEqual(B.to_bytes(), B_ENC)
         self.assertEqual(int(B.y), int(FE(4) / FE(5)))
         self.assertTrue(B.x.is_even())
 
     def test_neutral_element(self):
-        self.assertTrue(GE().infinity)
-        self.assertEqual(GE().to_bytes_compressed(), NEUTRAL_ENC)
-        self.assertTrue(GE.from_bytes_compressed_with_identity(NEUTRAL_ENC).infinity)
+        self.assertTrue(GE().is_identity)
+        self.assertEqual(GE().to_bytes_with_identity(), NEUTRAL_ENC)
+        self.assertTrue(GE.from_bytes_with_identity(NEUTRAL_ENC).is_identity)
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed(NEUTRAL_ENC)  # strict variant refuses it
-        self.assertTrue(GE.sum().infinity)
-        self.assertTrue(GE.batch_mul().infinity)
+            GE.from_bytes(NEUTRAL_ENC)  # strict variant refuses it
+        self.assertTrue(GE.sum().is_identity)
+        self.assertTrue(GE.batch_mul().is_identity)
+    
+    def test_to_bytes_refuses_the_identity(self):
+        self.assertEqual(GE().to_bytes_with_identity(), NEUTRAL_ENC)
+        with self.assertRaises(ValueError):
+            GE().to_bytes()
 
     def test_neutral_is_not_the_order_two_point(self):
         # (0, -1) has x == 0 but is NOT the neutral element. Checking only x
         # would conflate them; this asserts we do not.
         t2 = GE(FE(0), FE(-1))
-        self.assertFalse(t2.infinity)
+        self.assertFalse(t2.is_identity)
         self.assertNotEqual(t2, GE())
-        self.assertTrue((t2 + t2).infinity)
+        self.assertTrue((t2 + t2).is_identity)
 
     def test_group_law(self):
         seed(7)
@@ -167,9 +172,9 @@ class GroupElementTests(unittest.TestCase):
             self.assertEqual(b * pa, (a * b) * B)
 
     def test_order(self):
-        self.assertTrue((Scalar(0) * B).infinity)
+        self.assertTrue((Scalar(0) * B).is_identity)
         self.assertTrue(B.in_prime_order_subgroup())
-        self.assertTrue((GE.ORDER * B).infinity)
+        self.assertTrue((GE.ORDER * B).is_identity)
 
     def test_sum_with_arguments(self):
         # ChillDKG builds sum_coms with this; it was previously only tested
@@ -181,14 +186,14 @@ class GroupElementTests(unittest.TestCase):
             expect = expect + p
         self.assertEqual(GE.sum(*pts), expect)
         self.assertEqual(GE.sum(pts[0]), pts[0])
-        self.assertTrue(GE.sum(pts[0], -pts[0]).infinity)
+        self.assertTrue(GE.sum(pts[0], -pts[0]).is_identity)
 
     def test_hash_and_str(self):
         seed(16)
         p = Scalar(randint(1, L - 1)) * B
-        self.assertEqual(hash(p), hash(GE.from_bytes_compressed(p.to_bytes_compressed())))
+        self.assertEqual(hash(p), hash(GE.from_bytes(p.to_bytes())))
         self.assertEqual({p, p}, {p})
-        self.assertEqual(str(p), p.to_bytes_compressed().hex())
+        self.assertEqual(str(p), p.to_bytes().hex())
         self.assertEqual(repr(GE()), "GE()")
         self.assertEqual(hash(FE(5)), hash(FE(5)))
         self.assertTrue(FE(4).is_square())
@@ -215,7 +220,7 @@ class GroupElementTests(unittest.TestCase):
         seed(9)
         for _ in range(50):
             p = Scalar(randint(1, L - 1)) * B
-            self.assertEqual(GE.from_bytes_compressed(p.to_bytes_compressed()), p)
+            self.assertEqual(GE.from_bytes(p.to_bytes()), p)
 
     def test_off_curve_rejected(self):
         with self.assertRaises(ValueError):
@@ -260,8 +265,8 @@ class FastGEMulTests(unittest.TestCase):
                 self.assertEqual(FAST_B.table[i], (1 << i) * B)
 
     def test_zero_and_negative(self):
-        self.assertTrue(FAST_B.mul(0).infinity)
-        self.assertTrue((Scalar(0) * B).infinity)
+        self.assertTrue(FAST_B.mul(0).is_identity)
+        self.assertTrue((Scalar(0) * B).is_identity)
         with self.assertRaises(ValueError):
             FAST_B.mul(-1)
 
@@ -282,7 +287,7 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(pubkey_gen(le(1)), B_ENC)
         seed(10)
         d = randint(1, L - 1)
-        self.assertEqual(pubkey_gen(le(d)), (Scalar(d) * B).to_bytes_compressed())
+        self.assertEqual(pubkey_gen(le(d)), (Scalar(d) * B).to_bytes())
 
     def test_pubkey_gen_rejects_bad_secrets(self):
         for bad in (le(0), le(L), le(L + 1), b"\x01" * 31):

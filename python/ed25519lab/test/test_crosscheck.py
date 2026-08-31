@@ -87,7 +87,7 @@ class LibsodiumCrossCheck(unittest.TestCase):
         for _ in range(30):
             a = rand_scalar()
             self.assertEqual(
-                (a * B).to_bytes_compressed(),
+                (a * B).to_bytes(),
                 sodium.crypto_scalarmult_ed25519_base_noclamp(a.to_bytes()),
             )
 
@@ -96,24 +96,24 @@ class LibsodiumCrossCheck(unittest.TestCase):
             a, b = rand_scalar(), rand_scalar()
             p = a * B
             self.assertEqual(
-                (b * p).to_bytes_compressed(),
-                sodium.crypto_scalarmult_ed25519_noclamp(b.to_bytes(), p.to_bytes_compressed()),
+                (b * p).to_bytes(),
+                sodium.crypto_scalarmult_ed25519_noclamp(b.to_bytes(), p.to_bytes()),
             )
 
     def test_point_add_and_sub(self):
         for _ in range(30):
             p, q = rand_scalar() * B, rand_scalar() * B
-            pb, qb = p.to_bytes_compressed(), q.to_bytes_compressed()
-            self.assertEqual((p + q).to_bytes_compressed(), sodium.crypto_core_ed25519_add(pb, qb))
-            self.assertEqual((p - q).to_bytes_compressed(), sodium.crypto_core_ed25519_sub(pb, qb))
+            pb, qb = p.to_bytes(), q.to_bytes()
+            self.assertEqual((p + q).to_bytes(), sodium.crypto_core_ed25519_add(pb, qb))
+            self.assertEqual((p - q).to_bytes(), sodium.crypto_core_ed25519_sub(pb, qb))
 
     def test_negation(self):
         for _ in range(30):
             p = rand_scalar() * B
             self.assertEqual(
-                (-p).to_bytes_compressed(),
+                (-p).to_bytes(),
                 sodium.crypto_core_ed25519_sub(
-                    GE().to_bytes_compressed(), p.to_bytes_compressed()
+                    GE().to_bytes_with_identity(), p.to_bytes()
                 ),
             )
 
@@ -151,19 +151,18 @@ class LibsodiumCrossCheck(unittest.TestCase):
         from test.test_strictness import SMALL_ORDER, unchecked_decode
 
         for _ in range(30):
-            enc = (rand_scalar() * B).to_bytes_compressed()
+            enc = (rand_scalar() * B).to_bytes()
             self.assertTrue(sodium.crypto_core_ed25519_is_valid_point(enc))
-            self.assertTrue(GE.from_bytes_compressed(enc).in_prime_order_subgroup())
+            self.assertTrue(GE.from_bytes(enc).in_prime_order_subgroup())
 
         for name in ("order 2", "order 4 (a)", "order 8 (a)"):
             t = unchecked_decode(SMALL_ORDER[name])
             for _ in range(10):
-                enc = (rand_scalar() * B + t).to_bytes_compressed()
+                enc = (rand_scalar() * B + t).to_bytes()
                 with self.subTest(torsion=name):
                     self.assertFalse(sodium.crypto_core_ed25519_is_valid_point(enc))
                     with self.assertRaises(ValueError):
-                        GE.from_bytes_compressed(enc)
-
+                        GE.from_bytes(enc)
     def test_libsodium_also_rejects_non_canonical_encodings(self):
         # is_valid_point is not only a subgroup predicate: it also enforces
         # canonicality, so it is a usable oracle for most of our decode policy.
@@ -176,7 +175,7 @@ class LibsodiumCrossCheck(unittest.TestCase):
             with self.subTest(enc=enc.hex()[:16]):
                 self.assertFalse(sodium.crypto_core_ed25519_is_valid_point(enc))
                 with self.assertRaises(ValueError):
-                    GE.from_bytes_compressed(enc)
+                    GE.from_bytes(enc)
 
     def test_we_now_agree_with_libsodium_on_the_neutral_element(self):
         """This used to be the one row where libsodium was not a valid oracle.
@@ -184,8 +183,8 @@ class LibsodiumCrossCheck(unittest.TestCase):
         crypto_core_ed25519_is_valid_point accepts only points "on the main
         subgroup" that "do not have a small order", and the identity has order
         one, so libsodium refuses it. We used to accept it in
-        from_bytes_compressed and push the decision to each call site. Since the
-        decoder was split, from_bytes_compressed refuses it too and the
+        from_bytes and push the decision to each call site. Since the
+        decoder was split, from_bytes refuses it too and the
         divergence is gone -- libsodium is now a clean oracle for the default
         decoder on every input class.
 
@@ -193,12 +192,12 @@ class LibsodiumCrossCheck(unittest.TestCase):
         having two: the identity is a real element of the prime-order subgroup,
         it just is not a valid value at most call sites.
         """
-        neutral = GE().to_bytes_compressed()
+        neutral = GE().to_bytes_with_identity()
         self.assertEqual(neutral, b"\x01" + b"\x00" * 31)
         self.assertFalse(sodium.crypto_core_ed25519_is_valid_point(neutral))
         with self.assertRaises(ValueError):
-            GE.from_bytes_compressed(neutral)
-        self.assertTrue(GE.from_bytes_compressed_with_identity(neutral).infinity)
+            GE.from_bytes(neutral)
+        self.assertTrue(GE.from_bytes_with_identity(neutral).is_identity)
         self.assertTrue(GE().in_prime_order_subgroup())
 
 
