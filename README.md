@@ -1,18 +1,12 @@
 ```
-  BIP: 445
-  Title: FROST Signing Protocol for BIP340 Signatures
+  Title: FROST Signing Protocol for Ed25519 Signatures
   Authors: Sivaram Dhakshinamoorthy <siv2ram@gmail.com>
-  Status: Draft
-  Type: Specification
-  Assigned: 2026-01-30
   License: CC0-1.0
-  Discussion: 2024-07-31: https://groups.google.com/g/bitcoindev/c/PeMp2HQl-H4/m/AcJtK0aKAwAJ
-  Requires: 340
 ```
 
 ## Abstract
 
-This document proposes a standard for the Flexible Round-Optimized Schnorr Threshold (FROST) signing protocol. The standard is compatible with [BIP340][bip340] public keys and signatures. It supports *tweaking*, which allows deriving [BIP32][bip32] child keys from the threshold public key and creating [BIP341][bip341] Taproot outputs with key and script paths.
+This document proposes a standard for the Flexible Round-Optimized Schnorr Threshold (FROST) signing protocol for Ed25519. The protocol produces ordinary 64-byte Ed25519 signatures as specified in [RFC 8032][rfc8032], verifying under a 32-byte Ed25519 threshold public key.
 
 ## Copyright
 
@@ -21,22 +15,19 @@ The accompanying source code is licensed under the [MIT license](https://opensou
 
 ## Motivation
 
-The FROST signature scheme enables threshold Schnorr signatures. In a *t-of-n* threshold configuration, any *t*[^t-edge-cases] participants can cooperatively produce a Schnorr signature that is indistinguishable from a signature produced by a single signer. FROST signatures are unforgeable as long as fewer than *t* participants are compromised. The signing protocol remains functional provided that at least *t* honest participants retain access to their secret shares.
+The FROST signature scheme enables threshold Ed25519 signatures. In a *t-of-n* threshold configuration, any *t*[^t-edge-cases] participants can cooperatively produce a signature that is indistinguishable from a signature produced by a single signer. FROST signatures are unforgeable as long as fewer than *t* participants are compromised. The signing protocol remains functional provided that at least *t* honest participants retain access to their secret shares.
 
-[^t-edge-cases]: While *t = n* and *t = 1* are in principle supported, simpler alternatives are available in these cases. In the case *t = n*, using a dedicated *n-of-n* multi-signature scheme such as MuSig2 (see [BIP327][bip327]) instead of FROST avoids the need for an interactive DKG (if using a trusted dealer for key generation is undesirable). The case *t = 1* can be realized by letting one signer generate an ordinary [BIP340][bip340] key pair and transmitting the key pair to every other signer, who can check its consistency and then simply use the ordinary [BIP340][bip340] signing algorithm. Signers still need to ensure that they agree on a key pair. The case *n = 1* is even simpler: it forces *t = 1*, and with no other signers to transmit the key pair to, the sole participant can directly use an ordinary [BIP340][bip340] key pair.
+[^t-edge-cases]: While *t = n* and *t = 1* are in principle supported, simpler alternatives are available in these cases. In the case *t = n*, using a dedicated *n-of-n* multi-signature scheme instead of FROST avoids the need for an interactive DKG (if using a trusted dealer for key generation is undesirable). The case *t = 1* can be realized by letting one signer generate an ordinary Ed25519 key pair ([RFC 8032][rfc8032]) and transmitting the key pair to every other signer, who can check its consistency and then simply use the ordinary Ed25519 signing algorithm. Signers still need to ensure that they agree on a key pair. The case *n = 1* is even simpler: it forces *t = 1*, and with no other signers to transmit the key pair to, the sole participant can directly use an ordinary Ed25519 key pair.
 
-The IRTF has published [RFC 9591][rfc9591], which specifies the FROST signing protocol for several elliptic curve and hash function combinations, including secp256k1 with SHA-256, the cryptographic primitives used in Bitcoin. However, the signatures produced by RFC 9591 are incompatible with BIP340 Schnorr signatures due to the X-only public keys introduced in BIP340. Additionally, RFC 9591 does not specify key tweaking mechanisms, which are essential for Bitcoin applications such as [BIP32][bip32] key derivation and [BIP341][bip341] Taproot. This document addresses these limitations by specifying a BIP340-compatible variant of FROST signing protocol that supports key tweaking.
+The IRTF has published [RFC 9591][rfc9591], which specifies the FROST signing protocol for several elliptic curve and hash function combinations, including edwards25519 with SHA-512. However, RFC 9591 specifies the original FROST protocol, in which every signer must process the full list of the other signers' nonce commitments. This document instead specifies the more efficient FROST3 variant, whose single nonce coefficient allows the coordinator to aggregate all public nonces into one constant-size aggregate nonce. In addition, this document adds partial signature verification with identifiable aborts, a coordinator-based communication model, and deterministic and stateless signing.
 
 Following the initial publication of the FROST protocol[[KG20][frost1]], several optimized variants have been proposed to improve computational efficiency and bandwidth optimization: FROST2[[CKM21][frost2]], FROST2-BTZ[[BTZ21][stronger-security-frost]], and FROST3[[RRJSS][roast], [CGRS23][olaf]]. Among these variants, FROST3 is the most efficient variant to date.
 
-This document specifies the FROST3 variant[^frost3-security]. The FROST3 signing protocol shares substantial similarities with the MuSig2 signing protocol specified in [BIP327][bip327]. Accordingly, this specification adopts several design principles from BIP327, including support for key tweaking, partial signature verification, and identifiable abort mechanisms. We note that significant portions of this document have been directly adapted from BIP327 due to the similarities in the signing protocols. Key generation for FROST signing is out of scope for this document.
+This document specifies the FROST3 variant[^frost3-security]. It is an Ed25519 adaptation of the secp256k1 [FROST Signing Protocol for BIP340 Signatures][bip-frost-signing-secp], carrying over that specification's design while producing ordinary Ed25519 signatures ([RFC 8032][rfc8032]) in place of BIP 340 Schnorr signatures. Key generation for FROST signing is out of scope for this document.
 
 [^frost3-security]: FROST3 has been proven existentially unforgeable under the Algebraic One-More Discrete Logarithm (AOMDL) assumption, for both trusted dealer and distributed key generation using the SimplPedPop protocol[[CGRS23][olaf]].
 
-The on-chain footprint of a FROST Taproot output is essentially a single BIP340 public key, and a transaction spending the output only requires a single signature cooperatively produced by at least *t* signers. This is **more compact** and has **lower verification cost** than each signer providing an individual public key and signature, as would be required by a *t-of-n* policy implemented using `OP_CHECKSIGADD` as introduced in [BIP342][bip342].
-As a side effect, the number *n* of participants is not limited by any consensus rules when using FROST.
-
-Moreover, FROST offers a **higher level of privacy** than `OP_CHECKSIGADD`: FROST Taproot outputs are indistinguishable for a blockchain observer from regular, single-signer Taproot outputs even though they are actually controlled by multiple signers. By tweaking the threshold public key, the shared Taproot output can have script spending paths that are hidden unless used.
+A FROST signature is a single 64-byte Ed25519 signature, and the threshold public key is a single 32-byte Ed25519 public key. Verifiers therefore need not be aware that a key is controlled by multiple parties: a *t-of-n* policy has the same size and verification cost as a single-signer key, the group membership remains private towards verifiers, and the number *n* of participants is not limited by the verifier.
 
 ## Overview
 
@@ -48,12 +39,10 @@ The goal of this proposal is to support a wide range of possible application sce
 Given a specific application scenario, some features may be unnecessary or not desirable, and implementers can choose not to support them.
 Such optional features include:
 
-- Applying plain tweaks after x-only tweaks.
-- Applying tweaks at all.
-- Dealing with messages that are not exactly 32 bytes.
 - Identifying a malicious signer after aborting (aborting itself remains mandatory).
+- The modified nonce generation algorithms *CounterNonceGen* and *DeterministicSign* (see [Modifications to Nonce Generation](#modifications-to-nonce-generation)).
 
-If applicable, the corresponding algorithms should simply fail when encountering inputs unsupported by a particular implementation. (For example, the signing algorithm may fail when given a message which is not 32 bytes.)
+If applicable, the corresponding algorithms should simply fail when encountering inputs unsupported by a particular implementation.
 Similarly, the test vectors that exercise the unimplemented features should be re-interpreted to expect an error, or be skipped if appropriate.
 
 ### Key Material and Setup
@@ -62,13 +51,10 @@ A FROST key generation protocol configures a group of *n* participants with a *t
 The corresponding *threshold secret key* is Shamir secret-shared among all *n* participants, where each participant holds a distinct long-term *secret share*.
 This ensures that any subset of at least *t* participants can jointly run the FROST signing protocol to produce a signature under the *threshold secret key*.
 
-Key generation for FROST signing is out of scope for this document. Implementations can use either a trusted dealer setup, as specified in [Appendix C of RFC 9591](https://www.rfc-editor.org/rfc/rfc9591.html#name-trusted-dealer-key-generati), or a distributed key generation (DKG) protocol such as [ChillDKG](https://github.com/BlockstreamResearch/bip-frost-dkg). The appropriate choice depends on the implementation's trust model and operational requirements.
+Key generation for FROST signing is out of scope for this document. Implementations can use either a trusted dealer setup, as specified in [Appendix C of RFC 9591](https://www.rfc-editor.org/rfc/rfc9591.html#name-trusted-dealer-key-generati), or a distributed key generation (DKG) protocol such as [ChillDKG][chilldkg]. The appropriate choice depends on the implementation's trust model and operational requirements.
 
-This protocol distinguishes between two public key formats: *plain public keys* are 33-byte compressed public keys traditionally used in Bitcoin, while *X-only public keys* are 32-byte keys defined in [BIP340][bip340].
-Key generation protocols produce *public shares* and *threshold public keys* in the plain format. During signing, we conditionally negate *secret shares* to ensure the resulting threshold signature verifies under the corresponding *X-only threshold public key*.
-
-> [!WARNING]
-> Key generation protocols must output a Taproot-safe *threshold public key*: one committed to an unspendable script path as recommended in [BIP341](https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#cite_note-23). This prevents a malicious party from embedding a hidden script path during key generation that would allow them to bypass the *t-of-n* threshold policy.
+Public keys and signatures use the encodings of [RFC 8032][rfc8032]: *public shares* and *threshold public keys* are 32-byte point encodings, and signatures are 64 bytes.
+There is only a single public key format, and no transformation of key material is required at any point of the signing protocol: signatures verify directly under the threshold public key output by key generation.
 
 #### Protocol Parties and Network Setup
 
@@ -85,9 +71,9 @@ Each signer has a point-to-point communication link to the coordinator (but sign
 
 [^participant-vs-signer]: This document says *participant* for anyone who took part in key generation, all *n* of them, and *signer* for a participant taking part in the current signing session, the *u* of them. Key material issued during key generation keeps the participant label, so *secshare*, *pubshare*, and the identifiers stay participant values even when a signer supplies them to an algorithm.
 
-If there is no dedicated coordinator, one of the signers can act as the coordinator. Alternatively, the protocol can be run without any coordinator, with each signer sending its contributions to every other signer, as described in [BIP327][bip327].
+If there is no dedicated coordinator, one of the signers can act as the coordinator. Alternatively, the protocol can be run without any coordinator, with each signer sending its contributions to every other signer.
 
-This document is written from the coordinator's perspective because the key generation methods compatible with this BIP, a trusted dealer setup and ChillDKG, also involve a central third party. Implementations are therefore likely to reuse the same setup for signing.
+This document is written from the coordinator's perspective because the key generation methods compatible with this specification, a trusted dealer setup and ChillDKG, also involve a central third party. Implementations are therefore likely to reuse the same setup for signing.
 
 #### Signing Inputs and Outputs
 
@@ -99,22 +85,21 @@ The threshold public key *thresh_pk* can be stored for efficiency or recomputed 
 Similarly, the values *n* and *t* are used only by *ValidateSignersCtx*.
 
 This signing protocol is compatible with any key generation protocol that produces valid FROST keys.
-Valid keys satisfy: (1) each *secret share* is a Shamir share of the *threshold secret key*, and (2) each *public share* equals the scalar multiplication *secshare \* G*.[^chilldkg-keys]
+Valid keys satisfy: (1) each *secret share* is a Shamir share of the *threshold secret key*, and (2) each *public share* equals the scalar multiplication *secshare &middot; B*.[^chilldkg-keys]
 Before signing, the signers context must pass *ValidateSignersCtx*, which rejects duplicate identifiers and confirms the key material reproduces the threshold public key. The signing algorithms (*Sign*, *PartialSigVerify*, and *PartialSigAgg*) include this check for clarity, so an implementation can instead validate a context once and skip the repeated checks in later calls.
 For comprehensive validation of the entire key material, *ValidateSignersCtx* can be run on all possible *u* signing participants.
 
-[^chilldkg-keys]: ChillDKG satisfies both conditions, so its [DKG output](https://github.com/BlockstreamResearch/bip-frost-dkg#dkg-outputs) can be used directly as key material.
+[^chilldkg-keys]: ChillDKG satisfies both conditions, so its [DKG output](https://github.com/mllwchrry/bip-frost-dkg#dkg-outputs) can be used directly as key material.
 
 > [!IMPORTANT]
 > Passing *ValidateSignersCtx* ensures functional compatibility with the signing protocol but does not guarantee the security of the key generation protocol itself.
 
-The output of the FROST signing protocol is a BIP340 Schnorr signature that verifies under the *X-only threshold public key* as if it were produced by a single signer using the *threshold secret key*.
+The output of the FROST signing protocol is an ordinary Ed25519 signature that verifies under the *threshold public key* as if it were produced by a single signer using the *threshold secret key*.
 
 ### General Signing Flow
 
 The coordinator and signers must be determined before initiating the signing protocol.
 The signer information is stored in a [Signers Context](#signers-context) data structure.
-The *threshold public key* may optionally be tweaked by initializing a [Tweak Context](#tweak-context) at this stage.
 
 Whenever the signers want to sign a message, the basic order of operations to create a threshold signature is as follows:
 
@@ -130,7 +115,7 @@ However, the internal structure of the *secnonce* and the *pubnonce* is a techni
 At this point, every signer has the required data to sign, which, in the algorithms specified below, is stored in a data structure called [Session Context](#session-context).
 Every signer computes a partial signature by running *Sign* with their long-term *secret share*, *secnonce* and the session context.
 Then, each signer sends their partial signature to the coordinator, who runs *PartialSigAgg* to produce the final signature.
-If all parties behaved honestly, the result passes [BIP340][bip340] verification.
+If all parties behaved honestly, the result is a valid Ed25519 signature under the threshold public key (see [Signature Verification](#signature-verification)).
 
 ![Frost signing flow](./docs/frost-signing-flow.png)
 
@@ -155,11 +140,11 @@ As a result, the [Session Context](#session-context) may look very different in 
 *NonceGen* must have access to a high-quality random generator to draw an unbiased, uniformly random value *rand*.
 
 > [!WARNING]
-> In contrast to BIP340 signing, the values *k<sub>1</sub>* and *k<sub>2</sub>* **must not be derived deterministically** from the session parameters, because deterministic nonces enable a complete key-recovery attack in multi-party discrete-logarithm signatures[[MPSW18][musig]].[^det-nonce]
+> In contrast to single-signer Ed25519 signing ([RFC 8032][rfc8032]), which derives its nonce deterministically from the secret key and the message, the values *k<sub>1</sub>* and *k<sub>2</sub>* **must not be derived deterministically** from the session parameters, because deterministic nonces enable a complete key-recovery attack in multi-party discrete-logarithm signatures[[MPSW18][musig]].[^det-nonce]
 
 The optional arguments to *NonceGen* enable a defense-in-depth mechanism that may prevent secret share exposure if *rand* is accidentally not drawn uniformly at random.
 If the value *rand* was identical in two *NonceGen* invocations, but any other argument was different, the *secnonce* would still be guaranteed to be different as well (with overwhelming probability), and thus accidentally using the same *secnonce* for *Sign* in both sessions would be avoided.
-Therefore, it is recommended to provide the optional arguments *secshare*, *pubshare*, *thresh_pk_xonly*, and *m* if these session parameters are already determined during nonce generation.
+Therefore, it is recommended to provide the optional arguments *secshare*, *pubshare*, *thresh_pk*, and *m* if these session parameters are already determined during nonce generation.
 The auxiliary input *extra_in* can contain additional contextual data that has a chance of changing between *NonceGen* runs,
 e.g., a supposedly unique session id (taken from the application), a session counter wide enough not to repeat in practice, any nonces by other signers (if already known), or the serialization of a data structure containing multiple of the above.
 However, the protection provided by the optional arguments should only be viewed as a last resort.
@@ -199,7 +184,7 @@ Aborts are identifiable for an honest party if the following conditions hold in 
 If these conditions hold and an honest party (signer or coordinator) runs an algorithm that fails due to invalid protocol contributions from malicious signers, then the algorithm run by the honest party will output the index (within the input list) of exactly one malicious signer.
 Additionally, whenever more than one honest party runs an aborting algorithm on the same contributions, they all identify the same malicious signer.
 
-In the coordinator setup assumed by this BIP, a signer receives only the aggregate nonce from the coordinator and never the individual *pubnonces* of the other signers, so it cannot recompute the aggregation to confirm it was done honestly and must trust the coordinator for the second condition. Because *PartialSigVerify* requires the full list of *pubnonces* and partial signatures, the coordinator (or a signer acting as the coordinator) is the natural party to run it and assign blame, as it is the only party that receives every signer's contribution.[^coordinator-less]
+In the coordinator setup assumed by this document, a signer receives only the aggregate nonce from the coordinator and never the individual *pubnonces* of the other signers, so it cannot recompute the aggregation to confirm it was done honestly and must trust the coordinator for the second condition. Because *PartialSigVerify* requires the full list of *pubnonces* and partial signatures, the coordinator (or a signer acting as the coordinator) is the natural party to run it and assign blame, as it is the only party that receives every signer's contribution.[^coordinator-less]
 
 [^coordinator-less]: In coordinator-less setups (see the [Protocol Parties and Network Setup](#protocol-parties-and-network-setup) section), each signer broadcasts its contributions to every other signer, so every honest signer holds the full set of *pubnonces* and partial signatures and can run *PartialSigVerify* to assign blame on its own.
 
@@ -212,34 +197,9 @@ More specifically, a malicious coordinator (whose existence violates the second 
 The only purpose of the algorithm *PartialSigVerify* is to ensure identifiable aborts, and it is not necessary to use it when identifiable aborts are not desired.
 In particular, partial signatures are *not* signatures.
 An adversary can forge a partial signature, i.e., create a partial signature without knowing the secret share for that particular participant public share.[^partialsig-forgery]
-However, if *PartialSigVerify* succeeds for all partial signatures then *PartialSigAgg* will return a valid Schnorr signature.
+However, if *PartialSigVerify* succeeds for all partial signatures then *PartialSigAgg* will return a valid Ed25519 signature.
 
 [^partialsig-forgery]: Assume a malicious signer intends to forge a partial signature for the signer with public share *P*. It participates in the signing session pretending to be two distinct signers: one with the public share *P* and the other with its own public share. The adversary then sets the nonce for the second signer in such a way that allows it to generate a partial signature for *P*. As a side effect, it cannot generate a valid partial signature for its own public share. An explanation of the steps required to create a partial signature forgery can be found in [this document](https://gist.github.com/siv2r/0eab97bae9b7186ef2a4919e49d3b426).
-
-### Tweaking the Threshold Public Key
-
-The threshold public key can be *tweaked*, which modifies the key as defined in the [Tweaking Definition](#tweaking-definition) subsection.[^no-pubshare-tweaking]
-In order to apply a tweak, the Tweak Context output by *TweakCtxInit* is provided to the *ApplyTweak* algorithm with the *is_xonly_t* argument set to false for plain tweaking and true for X-only tweaking.
-The resulting Tweak Context can be used to apply another tweak with *ApplyTweak* or obtain the threshold public key with *GetXonlyPubkey* or *GetPlainPubkey*.
-
-[^no-pubshare-tweaking]: As opposed to MuSig2, tweaking a single participant's public share (which could be seen as the FROST equivalent to an individual public key) is not meaningful in FROST and thus unsupported. As a consequence, the *secnonce* need not commit to the public share (see [^secnonce-vs-bip327]).
-
-The purpose of supporting tweaking is to ensure compatibility with existing uses of tweaking, i.e., that the result of signing is a valid signature for the tweaked public key.
-The FROST signing algorithms take arbitrary tweaks as input but accepting arbitrary tweaks may negatively affect the security of the scheme.[^arbitrary-tweaks]
-Instead, signers should obtain the tweaks according to other specifications.
-This typically involves deriving the tweaks from a hash of the threshold public key and some other information.
-Depending on the specific scheme that is used for tweaking, either the plain or the X-only threshold public key is required.
-For example, to do [BIP32][bip32] derivation, you call *GetPlainPubkey* to be able to compute the tweak, whereas [BIP341][bip341] TapTweaks require X-only public keys that are obtained with *GetXonlyPubkey*.
-
-[^arbitrary-tweaks]: It is an open question whether allowing *arbitrary* tweaks from an adversary affects the unforgeability of FROST. The standard tweaking used for [BIP32][bip32] derivation and [BIP341][bip341] Taproot corresponds to re-randomizing the threshold public key with an additive tweak derived via a hash function, which has been proven to preserve unforgeability under the same AOMDL assumption (in the random oracle model) that underlies plain FROST[[GK24][rerandomized-frost]].
-
-The tweak mode provided to *ApplyTweak* depends on the application:
-Plain tweaking can be used to derive child public keys from a threshold public key using [BIP32][bip32].
-On the other hand, X-only tweaking is required for Taproot tweaking per [BIP341][bip341].
-A Taproot-tweaked public key commits to a *script path*, allowing users to create transaction outputs that are spendable either with a FROST threshold signature or by providing inputs that satisfy the script path.
-Script path spends require a control block that contains a parity bit for the tweaked X-only public key.
-<!-- markdownlint-disable-next-line MD011 -->
-The bit can be obtained with *GetPlainPubkey(tweak_ctx)[0] & 1*.
 
 ## Algorithms
 
@@ -247,50 +207,46 @@ The following specification of the algorithms has been written with a focus on c
 
 ### Notation
 
-The algorithms are defined over the **[secp256k1](https://www.secg.org/sec2-v2.pdf) group and its associated scalar field**. We note that adapting this proposal to other elliptic curves is not straightforward and can result in an insecure scheme.
+The algorithms are defined over the **edwards25519 curve and its prime-order subgroup**, as specified in [RFC 8032][rfc8032]. The curve group has order *8 &middot; L*, where *L* is a prime; all protocol values are points of the prime-order subgroup of order *L*, which the strict decoding function defined below enforces. The identity element of the group is the point *(0, 1)*. We note that adapting this proposal to other elliptic curves is not straightforward and can result in an insecure scheme.
 
 #### Cryptographic Types and Operations
 
 We rely on the following types and conventions throughout this document:
 
 - **Types:** Points on the curve are represented by the object *GE*, and scalars are represented by *Scalar*.
-- **Naming:** Points are denoted using uppercase letters (e.g., *P*, *Q*), while scalars are denoted using lowercase letters (e.g., *r*, *s*).
-- **Mathematical Context:** Points are group elements under elliptic curve addition. The group includes all points on the secp256k1 curve plus the point at infinity (the identity element).
+- **Naming:** Points are denoted using uppercase letters (e.g., *P*, *A*), while scalars are denoted using lowercase letters (e.g., *r*, *s*).
+- **Encodings:** A point is encoded in 32 bytes as specified in RFC 8032: the little-endian encoding of its y-coordinate, with the sign of the x-coordinate stored in the most significant bit of the last byte. There is a single point encoding, and the identity element is encodable like any other point, so each decoding function states explicitly whether it accepts the identity. A scalar is an integer modulo *L*, encoded in 32 bytes in little-endian. Hash outputs are mapped to scalars by reducing the full 64-byte SHA-512 output modulo *L* ("wide reduction"). Other integers (identifiers, lengths) are encoded in big-endian.
 - **Arithmetic:** The operators +, -, and &middot; are overloaded depending on their operands:
-  - **Scalar Arithmetic:** When applied to two *Scalar* operands, +, -, and &middot; denote integer addition, subtraction, and multiplication modulo the group order.
-  - **Point Addition:** When applied to two *GE* operands, + denotes the elliptic curve [group addition operation](https://en.wikipedia.org/wiki/Elliptic_curve#The_group_law).
+  - **Scalar Arithmetic:** When applied to two *Scalar* operands, +, -, and &middot; denote integer addition, subtraction, and multiplication modulo *L*.
+  - **Point Addition:** When applied to two *GE* operands, + denotes the elliptic curve [group addition operation](https://en.wikipedia.org/wiki/Elliptic_curve#The_group_law). The Edwards addition law is complete, i.e., it has no special cases.
   - **Scalar Multiplication:** The notation r &middot; P denotes [scalar multiplication](https://en.wikipedia.org/wiki/Elliptic_curve_point_multiplication) (the repeated addition of point P, r times).
 
-The reference code vendors the secp256k1lab library to handle underlying arithmetic, serialization, deserialization, and auxiliary functions. To improve the readability of this specification, we utilize simplified notation aliases for the library's internal methods, as mapped below:
+The reference code vendors the ed25519lab library to handle underlying arithmetic, serialization, deserialization, and auxiliary functions. To improve the readability of this specification, we utilize simplified notation aliases for the library's internal methods, as mapped below:
 
 <!-- markdownlint-disable MD033 -->
-| Notation | secp256k1lab | Description |
+| Notation | ed25519lab | Description |
 | --- | --- | --- |
 | *p* | *FE.SIZE* | Field element size |
-| *ord* | *GE.ORDER*, *Scalar.SIZE* | Group order |
-| *G* | *G* | The secp256k1 generator point |
-| *inf_point* | *GE()* | The infinity point |
-| *is_infinity(P)* | *P.infinity* | Returns whether *P* is the point at infinity |
-| *x(P)* | *P.x* | Returns the x-coordinate of a non-infinity point *P*, in the range *[0, p−1]* |
-| *y(P)* | *P.y* | Returns the y-coordinate of a non-infinity point *P*, in the range *[0, p-1]* |
-| *has_even_y(P)* | *P.has_even_y()* | Returns whether *P* has an even y-coordinate |
-| *with_even_y(P)* | - | Returns the version of point *P* that has an even y-coordinate. If *P* already has an even y-coordinate (or is infinity), it is returned unchanged. Otherwise, its negation *-P* is returned |
-| *xbytes(P)* | *P.to_bytes_xonly()* | Returns the 32-byte x-only serialization of a non-infinity point *P* |
-| *cbytes(P)* | *P.to_bytes_compressed()* | Returns the 33-byte compressed serialization of a non-infinity point *P* |
-| *cbytes_ext(P)* | *P.to_bytes_compressed<br>_with_infinity()* | Returns the 33-byte compressed serialization of a point *P*. If *P* is the point at infinity, it is encoded as a 33-byte array of zeros. |
-| *lift_x(x)*[^liftx-soln] | *GE.lift_x(x)* | Decodes a 32-byte x-only serialization *x* into a non-infinity point P. The resulting point always has an even y-coordinate. |
-| *cpoint(b)* | *GE.from_bytes_compressed(b)* | Decodes a 33-byte compressed serialization *b* into a non-infinity point |
-| *cpoint_ext(b)* | *GE.from_bytes_compressed<br>_with_infinity(b)* | Decodes a 33-byte compressed serialization *b* into a point. If *b* is a 33-byte array of zeros, it returns the point at infinity |
-| *scalar_to_bytes(s)* | *s.to_bytes()* | Returns the 32-byte serialization of a scalar *s* |
-| *scalar_from_bytes_checked(b)* | *Scalar.from_bytes_checked(b)* | Deserializes a 32-byte array *b* to a scalar, fails if the value is ≥ *ord* |
-| *scalar_from_bytes<br>_nonzero_checked(b)* | *Scalar.from_bytes<br>_nonzero_checked(b)* | Deserializes a 32-byte array *b* to a scalar, fails if the value is zero or ≥ *ord* |
-| *scalar_from_bytes_wrapping(b)* | *Scalar.from_bytes_wrapping(b)* | Deserializes a 32-byte array *b* to a scalar, reducing the value modulo *ord* |
-| *hash<sub>tag</sub>(x)* | *tagged_hash(tag, x)* | Computes a 32-byte domain-separated hash of the byte array *x*. The output is *SHA256(SHA256(tag) \|\| SHA256(tag) \|\| x)*, where *tag* is UTF-8 encoded string unique to the context |
+| *L* | *Scalar.SIZE*, *GE.ORDER* | Order of the prime-order subgroup |
+| *B* | *B* | The Ed25519 base point |
+| *identity* | *GE()* | The identity element *(0, 1)* |
+| *is_identity(P)* | *P.is_identity* | Returns whether *P* is the identity element |
+| *bytes(P)* | *P.to_bytes()* | Returns the 32-byte serialization of a point *P*; fails if *P* is the identity element |
+| *bytes_ext(P)* | *P.to_bytes<br>_with_identity()* | Returns the 32-byte serialization of a point *P*. The identity element is serialized canonically like any other point |
+| *point(b)* | *GE.from_bytes(b)* | Decodes a 32-byte serialization *b* into a point; fails if *b* is not canonical, not on the curve, not in the prime-order subgroup, or the identity element |
+| *point_ext(b)* | *GE.from_bytes<br>_with_identity(b)* | Like *point(b)*, but accepts the canonical serialization of the identity element |
+| *scalar_to_bytes(s)* | *s.to_bytes()* | Returns the 32-byte little-endian serialization of a scalar *s* |
+| *scalar_from_bytes_checked(b)* | *Scalar.from_bytes_checked(b)* | Deserializes a 32-byte array *b* to a scalar, fails if the value is ≥ *L* |
+| *scalar_from_bytes<br>_nonzero_checked(b)* | *Scalar.from_bytes<br>_nonzero_checked(b)* | Deserializes a 32-byte array *b* to a scalar, fails if the value is zero or ≥ *L* |
+| *scalar_from_bytes_wide(b)* | *Scalar.from_bytes_wide(b)* | Deserializes a 64-byte array *b* to a scalar, reducing the value modulo *L* (wide reduction) |
+| *hash(x)* | *hash_sha512(x)* | Computes the plain (untagged) 64-byte SHA-512 hash of the byte array *x* |
+| *hash<sub>tag</sub>(x)* | *tagged_hash(tag, x)* | Computes a 64-byte domain-separated hash of the byte array *x*. The output is *SHA512(SHA512(tag)\[0:32] \|\| x)*, where *tag* is a UTF-8 encoded string unique to the context |
 | *random_bytes(n)* | - | Returns *n* bytes, sampled uniformly at random using a cryptographically secure pseudorandom number generator (CSPRNG) |
 | *xor_bytes(a, b)* | *xor_bytes(a, b)* | Returns byte-wise xor of *a* and *b* |
 <!-- markdownlint-enable MD033 -->
 
-[^liftx-soln]: Given a candidate x-coordinate *x* in the range *0..p-1*, there exist either exactly two or exactly zero valid y-coordinates. If no valid y-coordinate exists, then *x* is not a valid x-coordinate either, i.e., no point *P* exists for which *x(P) = x*. The valid y-coordinates for a given candidate *x* are the square roots of *c = x<sup>3</sup> + 7 mod p* and they can be computed as *y = ±c<sup>(p+1)/4</sup> mod p* (see [Quadratic residue](https://en.wikipedia.org/wiki/Quadratic_residue#Prime_or_prime_power_modulus)) if they exist, which can be checked by squaring and comparing with *c*.
+> [!WARNING]
+> The tagged hash hashes the tag into a fixed 32-byte prefix (the first 32 bytes of *SHA512(tag)*) instead of prepending the raw tag string. This is required for domain separation, not a stylistic choice, and implementations must not simplify it to a flat *SHA512(tag || x)*. Two of the tags are in a prefix relationship, *FROST3-ed25519-v1/nonce* and *FROST3-ed25519-v1/noncecoef*: under a flat prefix, *SHA512("FROST3-ed25519-v1/nonce" || "coef" || x)* would equal *SHA512("FROST3-ed25519-v1/noncecoef" || x)*, collapsing the domain separation between nonce derivation and the binding coefficient. Hashing the tag to a fixed length keeps the tag and data unambiguously separated, so no such collision can occur.
 
 #### Auxiliary and Byte-string Operations
 
@@ -308,7 +264,7 @@ The following helper functions and notation are used for operations on standard 
 | *(a, b, ...)* | Refers to a tuple containing the listed elements |
 
 > [!NOTE]
-> In the following algorithms, all scalar arithmetic is understood to be modulo the group order. For example, *a &middot; b* implicitly means *a &middot; b mod order*
+> In the following algorithms, all scalar arithmetic is understood to be modulo *L*. For example, *a &middot; b* implicitly means *a &middot; b mod L*
 
 ### Key Material and Setup
 
@@ -318,35 +274,37 @@ The Signers Context is a data structure consisting of the following elements:
 
 - The total number *n* of participants involved in key generation: an integer with *1 ≤ n < 2<sup>32</sup>*[^t-edge-cases]
 - The threshold number *t* of participants required to issue a signature: an integer with *1 ≤ t ≤ n*
-- The number *u* of signers: an integer with *t ≤ u ≤ n*
-- The list of participant identifiers *id<sub>1..u</sub>*: *u* distinct integers, each with *0 ≤ id<sub>i</sub> ≤ n - 1*
-- The list of participant public shares *pubshare<sub>1..u</sub>*: *u* 33-byte arrays, each a compressed serialized point
-- The threshold public key *thresh_pk*: a 33-byte array, compressed serialized point
+- The list of participant identifiers *id<sub>1..u</sub>*: *u* distinct integers, each with *0 ≤ id<sub>i</sub> ≤ n - 1*, where the number *u* of signers satisfies *t ≤ u ≤ n*
+- The list of participant public shares *pubshare<sub>1..u</sub>*: *u* 32-byte arrays, each a serialized point
+- The threshold public key *thresh_pk*: a 32-byte array, serialized point
 
-We write "Let *(n, t, u, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, thresh_pk) = signers_ctx*" to assign names to the elements of Signers Context.
+The lists *id<sub>1..u</sub>* and *pubshare<sub>1..u</sub>* are aligned by index: for every *i*, *id<sub>i</sub>* and *pubshare<sub>i</sub>* are the identifier and public share of the same participant. This correspondence is load-bearing (*DeriveThreshPubkey* pairs each *id<sub>i</sub>* with *pubshare<sub>i</sub>*, and *PartialSigVerify* reads *id<sub>i</sub>*, *pubshare<sub>i</sub>*, and *pubnonce<sub>i</sub>* together at a single index), and preserving it is the caller's responsibility: the algorithms check only that a given *pubshare* and *my_id* each appear somewhere in their list, not that they occupy the same position.
+
+We write "Let *(n, t, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, thresh_pk) = signers_ctx*" to assign names to the elements of Signers Context.
 
 Algorithm *ValidateSignersCtx(signers_ctx)*:
 
 - Inputs:
   - The *signers_ctx*: a [Signers Context](#signers-context) data structure
-- *(n, t, u, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, thresh_pk) = signers_ctx*
+- *(n, t, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, thresh_pk) = signers_ctx*
 - Fail if not *1 ≤ t ≤ n*
 - Fail if not *t ≤ u ≤ n*
 - For *i = 1 .. u*:
   - Fail if not *0 ≤ id<sub>i</sub> ≤ n - 1*
-  - Let *P<sub>i</sub> = cpoint(pubshare<sub>i</sub>)*; fail if that fails
+  - Let *P<sub>i</sub> = point(pubshare<sub>i</sub>)*; fail if that fails
 - Fail if *has_duplicates(id<sub>1..u</sub>)*
-- Fail if *DeriveThreshPubkey(id<sub>1..u</sub>, P<sub>1..u</sub>) ≠ thresh_pk*
+- Let *thresh_pk' = DeriveThreshPubkey(id<sub>1..u</sub>, P<sub>1..u</sub>)*; fail if that fails
+- Fail if *thresh_pk' ≠ thresh_pk*
 - No return
 
 Internal Algorithm *DeriveThreshPubkey(id<sub>1..u</sub>, P<sub>1..u</sub>)*[^derive-thresh-no-validate-inputs]
 
-- *Q = inf_point*
+- *A = identity*
 - For *i = 1..u*:
   - *&lambda; = DeriveInterpolatingValue(id<sub>1..u</sub>, id<sub>i</sub>)*
-  - *Q = Q + &lambda; &middot; P<sub>i</sub>*
-- Fail if *is_infinity(Q)*
-- Return *cbytes(Q)*
+  - *A = A + &lambda; &middot; P<sub>i</sub>*
+- Fail if *is_identity(A)*
+- Return *bytes(A)*
 
 [^derive-thresh-no-validate-inputs]: *DeriveThreshPubkey* does not validate its inputs. Its only caller, *ValidateSignersCtx*, deserializes the public shares into points and validates them (and the identifiers) beforehand.
 
@@ -358,110 +316,52 @@ Internal Algorithm *DeriveInterpolatingValue(id<sub>1..u</sub>, my_id):*
 - Let *deno = Scalar(1)*
 - For *i = 1..u*:
   - If *id<sub>i</sub> ≠ my_id*:
-    - Let *num = num &middot; Scalar(id<sub>i</sub> + 1)[^lagrange-shift] &ensp;(mod ord)*
-    - Let *deno = deno &middot; Scalar(id<sub>i</sub> - my_id) &ensp;(mod ord)*
-- *&lambda; = num &middot; deno<sup>-1</sup> &ensp;(mod ord)*
+    - Let *num = num &middot; Scalar(id<sub>i</sub> + 1)[^lagrange-shift] &ensp;(mod L)*
+    - Let *deno = deno &middot; Scalar(id<sub>i</sub> - my_id) &ensp;(mod L)*
+- *&lambda; = num &middot; deno<sup>-1</sup> &ensp;(mod L)*
 - Return *&lambda;*
 
 [^lagrange-shift]: The standard Lagrange interpolation coefficient uses the formula *id<sub>i</sub> / (id<sub>i</sub> - my_id)* for each term in the product, where identifiers are in the range *1..n*. However, since participant identifiers in this protocol are zero-indexed (range *0..n-1*), we shift them by adding 1. This transforms each term to *(id<sub>i</sub>+1) / (id<sub>i</sub> - my_id)*.
 
-### Tweaking the Threshold Public Key
-
-#### Tweak Context
-
-The Tweak Context is a data structure consisting of the following elements:
-
-- The point *Q* representing the potentially tweaked threshold public key: a *GE*
-- The value *gacc*: *Scalar(1)* or *Scalar(-1)*
-- The accumulated tweak *tacc*: a *Scalar*
-
-We write "Let *(Q, gacc, tacc) = tweak_ctx*" to assign names to the elements of a Tweak Context.
-
-> [!TIP]
-> The Tweak Context is identical to the *KeyAgg Context* defined in [BIP327][bip327]. Implementations with existing BIP327 code can reuse it to implement this data structure and its algorithms.
-
-Algorithm *TweakCtxInit(thresh_pk):*
-
-- Input:
-  - The threshold public key *thresh_pk*: a 33-byte array, compressed serialized point
-- Let *Q = cpoint(thresh_pk)*; fail if that fails
-- Let *gacc = Scalar(1)*
-- Let *tacc = Scalar(0)*
-- Return *tweak_ctx = (Q, gacc, tacc)*
-
-Algorithm *GetXonlyPubkey(tweak_ctx)*:
-
-- Inputs:
-  - The *tweak_ctx*: a [Tweak Context](#tweak-context) data structure
-- Let *(Q, _, _) = tweak_ctx*
-- Return *xbytes(Q)*
-
-Algorithm *GetPlainPubkey(tweak_ctx)*:
-
-- Inputs:
-  - The *tweak_ctx*: a [Tweak Context](#tweak-context) data structure
-- Let *(Q, _, _) = tweak_ctx*
-- Return *cbytes(Q)*
-
-#### Applying Tweaks
-
-Algorithm *ApplyTweak(tweak_ctx, tweak, is_xonly_t)*:
-
-- Inputs:
-  - The *tweak_ctx*: a [Tweak Context](#tweak-context) data structure
-  - The *tweak*: a 32-byte array, serialized scalar
-  - The tweak mode *is_xonly_t*: a boolean
-- Let *(Q, gacc, tacc) = tweak_ctx*
-- If *is_xonly_t* and not *has_even_y(Q)*:
-  - Let *g = Scalar(-1)*
-- Else:
-  - Let *g = Scalar(1)*
-- Let *t = scalar_from_bytes_checked(tweak)*; fail if that fails
-- Let *Q' = g &middot; Q + t &middot; G*
-  - Fail if *is_infinity(Q')*
-- Let *gacc' = g &middot; gacc &ensp;(mod ord)*
-- Let *tacc' = t + g &middot; tacc &ensp;(mod ord)*
-- Return *tweak_ctx' = (Q', gacc', tacc')*
-
 ### Nonce Generation
 
-Algorithm *NonceGen(secshare, pubshare, thresh_pk_xonly, m, extra_in)*:
+Algorithm *NonceGen(secshare, pubshare, thresh_pk, m, extra_in)*:
 
 - Inputs:
   - The participant secret share *secshare*: a 32-byte array, serialized scalar (optional argument)
-  - The participant public share *pubshare*: a 33-byte array, compressed serialized point (optional argument)
-  - The x-only threshold public key *thresh_pk_xonly*: a 32-byte array, x-only serialized point (optional argument). If tweaks are to be applied during signing, this is ideally the x-only public key that results from applying all of them, i.e., the output of *GetXonlyPubkey(tweak_ctx)*. If no tweaks are to be applied, or if it is not yet determined at nonce generation time whether or which tweaks will be applied, this may also be the last 32 bytes of the threshold public key *thresh_pk*.
+  - The participant public share *pubshare*: a 32-byte array, serialized point (optional argument)
+  - The threshold public key *thresh_pk*: a 32-byte array, serialized point (optional argument)
   - The message *m*: a byte array (optional argument)[^max-msg-len]
   - The auxiliary input *extra_in*: a byte array with *0 ≤ len(extra_in) ≤ 2<sup>32</sup>-1* (optional argument)
 - Let *rand = random_bytes(32)*
 - If the optional argument *secshare* is present:
-  - Let *rand' = xor_bytes(secshare, hash<sub>BIP0445/aux</sub>(rand))*[^sk-xor-rand]
+  - Let *rand' = xor_bytes(secshare, hash<sub>FROST3-ed25519-v1/aux</sub>(rand)\[0:32])*[^sk-xor-rand]
 - Else:
   - Let *rand' = rand*
 - If the optional argument *pubshare* is not present:
   - Let *pubshare* = *empty_bytestring*
-- If the optional argument *thresh_pk_xonly* is not present:
-  - Let *thresh_pk_xonly* = *empty_bytestring*
+- If the optional argument *thresh_pk* is not present:
+  - Let *thresh_pk* = *empty_bytestring*
 - If the optional argument *m* is not present:
   - Let *m_prefixed = bytes(1, 0)*
 - Else:
   - Let *m_prefixed = bytes(1, 1) || bytes(8, len(m)) || m*
 - If the optional argument *extra_in* is not present:
   - Let *extra_in = empty_bytestring*
-- Let *k<sub>i</sub> = scalar_from_bytes_wrapping(hash<sub>BIP0445/nonce</sub>(rand' || bytes(1, len(pubshare)) || pubshare || bytes(1, len(thresh_pk_xonly)) || thresh_pk_xonly || m_prefixed || bytes(4, len(extra_in)) || extra_in || bytes(1, i - 1)))* for *i = 1,2*
+- Let *k<sub>i</sub> = scalar_from_bytes_wide(hash<sub>FROST3-ed25519-v1/nonce</sub>(rand' || bytes(1, len(pubshare)) || pubshare || bytes(1, len(thresh_pk)) || thresh_pk || m_prefixed || bytes(4, len(extra_in)) || extra_in || bytes(1, i - 1)))* for *i = 1,2*
 - Fail if *k<sub>1</sub> = Scalar(0)* or *k<sub>2</sub> = Scalar(0)*[^negligible-zero-scalar]
-- Let *R<sub>\*,1</sub> = k<sub>1</sub> &middot; G*, *R<sub>\*,2</sub> = k<sub>2</sub> &middot; G*
-- Let *pubnonce = cbytes(R<sub>\*,1</sub>) || cbytes(R<sub>\*,2</sub>)*
-- Let *secnonce = scalar_to_bytes(k<sub>1</sub>) || scalar_to_bytes(k<sub>2</sub>)*[^secnonce-ser][^secnonce-vs-bip327]
+- Let *R<sub>\*,1</sub> = k<sub>1</sub> &middot; B*, *R<sub>\*,2</sub> = k<sub>2</sub> &middot; B*
+- Let *pubnonce = bytes(R<sub>\*,1</sub>) || bytes(R<sub>\*,2</sub>)*
+- Let *secnonce = scalar_to_bytes(k<sub>1</sub>) || scalar_to_bytes(k<sub>2</sub>)*[^secnonce-ser][^secnonce-no-pubshare]
 - Return *(secnonce, pubnonce)*
 
-[^sk-xor-rand]: The random data is hashed (with a unique tag) as a precaution against situations where the randomness may be correlated with the secret share itself. It is xored with the secret share (rather than combined with it in a hash) to reduce the number of operations exposed to the actual secret share.
+[^sk-xor-rand]: The random data is hashed (with a unique tag) as a precaution against situations where the randomness may be correlated with the secret share itself. It is xored with the secret share (rather than combined with it in a hash) to reduce the number of operations exposed to the actual secret share. Since the tagged hash outputs 64 bytes, it is truncated to the 32-byte width of the secret share; the truncation loses no security, as the mask needs only as many bytes as the value it hides.
 
 [^secnonce-ser]: The algorithms as specified here assume that the *secnonce* is stored as a 64-byte array using the serialization *secnonce = scalar_to_bytes(k<sub>1</sub>) || scalar_to_bytes(k<sub>2</sub>)*. The same format is used in the reference implementation and in the test vectors. However, since the *secnonce* is (obviously) not meant to be sent over the wire, compatibility between implementations is not a concern, and this method of storing the *secnonce* is merely a suggestion. The *secnonce* is effectively a local data structure of the signer which comprises the value pair *(k<sub>1</sub>, k<sub>2</sub>)*, and implementations may choose any suitable method to carry it from *NonceGen* (first communication round) to *Sign* (second communication round). In particular, implementations may choose to hide the *secnonce* in internal state without exposing it in an API explicitly, e.g., in an effort to prevent callers from reusing a *secnonce* accidentally.
 
-[^secnonce-vs-bip327]: [BIP327][bip327] appends the serialized individual public key to the *secnonce* (resulting in a 96-byte *secnonce*) to avoid a vulnerability that may arise when MuSig2 signers tweak their individual key pair before key aggregation. In FROST, the threshold public key is fixed at key generation and tweaking a participant's public share is not supported (see [^no-pubshare-tweaking]). Thus, this vulnerability does not apply to FROST, and appending the public share to the *secnonce* is not necessary.
+[^secnonce-no-pubshare]: The [MuSig2][bip327] signing protocol appends the serialized individual public key to the *secnonce* to avoid a vulnerability that may arise when MuSig2 signers derive a different individual key pair between nonce generation and signing. In FROST, a participant's public share and the threshold public key are fixed at key generation, so this vulnerability does not apply, and appending the public share to the *secnonce* is not necessary.
 
-[^max-msg-len]: In theory, the allowed message size is restricted because SHA256 accepts byte strings only up to size of 2^61-1 bytes (and because of the 8-byte length encoding).
+[^max-msg-len]: In theory, the allowed message size is restricted because SHA-512 accepts byte strings only up to size of 2^125-1 bytes (and because of the 8-byte length encoding).
 
 [^negligible-zero-scalar]: These are unreachable errors, included for completeness: such a value equals *Scalar(0)* only with negligible probability. The reference implementation checks the condition with an assertion.
 
@@ -470,48 +370,40 @@ Algorithm *NonceGen(secshare, pubshare, thresh_pk_xonly, m, extra_in)*:
 Algorithm *NonceAgg(pubnonce<sub>1..u</sub>)*:
 
 - Inputs:
-  - The number *u* of signers: an integer with *t ≤ u ≤ n*
-  - The list of signers' public nonces *pubnonce<sub>1..u</sub>*: *u* 66-byte arrays, each an output of *NonceGen*
+  - The list of signers' public nonces *pubnonce<sub>1..u</sub>*: *u* 64-byte arrays, each an output of *NonceGen*
 - For *j = 1 .. 2*:
   - For *i = 1 .. u*:
-    - Let *R<sub>i,j</sub> = cpoint(pubnonce<sub>i</sub>[(j-1)\*33:j\*33])*; fail if that fails and blame signer at index *i* for invalid *pubnonce*
+    - Let *R<sub>i,j</sub> = point(pubnonce<sub>i</sub>[(j-1)\*32:j\*32])*; fail if that fails and blame signer at index *i* for invalid *pubnonce*
   - Let *R<sub>j</sub> = R<sub>1,j</sub> + R<sub>2,j</sub> + ... + R<sub>u,j</sub>*
-- Return *aggnonce = cbytes_ext(R<sub>1</sub>) || cbytes_ext(R<sub>2</sub>)*
+- Return *aggnonce = bytes_ext(R<sub>1</sub>) || bytes_ext(R<sub>2</sub>)*
 
 ### Session Context
 
 The Session Context is a data structure consisting of the following elements:
 
 - The *signers_ctx*: a [Signers Context](#signers-context) data structure
-- The aggregate public nonce *aggnonce*: a 66-byte array, output of *NonceAgg*
-- The number *v* of tweaks with *0 ≤ v < 2^32*
-- The list of tweaks *tweak<sub>1..v</sub>*: *v* 32-byte arrays, each a serialized scalar
-- The list of tweak modes *is_xonly_t<sub>1..v</sub>* : *v* booleans
+- The aggregate public nonce *aggnonce*: a 64-byte array, output of *NonceAgg*
 - The message *m*: a byte array[^max-msg-len]
 
-We write "Let *(signers_ctx, aggnonce, v, tweak<sub>1..v</sub>, is_xonly_t<sub>1..v</sub>, m) = session_ctx*" to assign names to the elements of a Session Context.
+We write "Let *(signers_ctx, aggnonce, m) = session_ctx*" to assign names to the elements of a Session Context.
 
 Algorithm *GetSessionValues(session_ctx)*:
 
-- Let *(signers_ctx, aggnonce, v, tweak<sub>1..v</sub>, is_xonly_t<sub>1..v</sub>, m) = session_ctx*
+- Let *(signers_ctx, aggnonce, m) = session_ctx*
 - *ValidateSignersCtx(signers_ctx)*; fail if that fails
-- Let *(_, _, u, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, thresh_pk) = signers_ctx*
-- Let *tweak_ctx<sub>0</sub> = TweakCtxInit(thresh_pk)*; fail if that fails
-- For *i = 1 .. v*:
-  - Let *tweak_ctx<sub>i</sub> = ApplyTweak(tweak_ctx<sub>i-1</sub>, tweak<sub>i</sub>, is_xonly_t<sub>i</sub>)*; fail if that fails
-- Let *(Q, gacc, tacc) = tweak_ctx<sub>v</sub>*
+- Let *(_, _, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, thresh_pk) = signers_ctx*
 - Let *ser_ids* = *SerializeIds(id<sub>1..u</sub>)*[^canonical-ids-det-sign]
-- Let *b* = *scalar_from_bytes_wrapping(hash<sub>BIP0445/noncecoef</sub>(bytes(4, u) || ser_ids || aggnonce || xbytes(Q) || m))*
+- Let *b* = *scalar_from_bytes_wide(hash<sub>FROST3-ed25519-v1/noncecoef</sub>(bytes(4, u) || ser_ids || aggnonce || thresh_pk || m))*
 - Fail if *b = Scalar(0)*[^negligible-zero-scalar]
-- Let *R<sub>1</sub> = cpoint_ext(aggnonce[0:33]), R<sub>2</sub> = cpoint_ext(aggnonce[33:66])*; fail if that fails and blame the coordinator for invalid *aggnonce*.
+- Let *R<sub>1</sub> = point_ext(aggnonce[0:32]), R<sub>2</sub> = point_ext(aggnonce[32:64])*; fail if that fails and blame the coordinator for invalid *aggnonce*.
 - Let *R' = R<sub>1</sub> + b &middot; R<sub>2</sub>*
-- If *is_infinity(R'):*
-  - Let final nonce *R = G* ([see Dealing with Infinity in Nonce Aggregation](#dealing-with-infinity-in-nonce-aggregation))
+- If *is_identity(R'):*
+  - Let final nonce *R = B* ([see Dealing with the Identity Element in Nonce Aggregation](#dealing-with-the-identity-element-in-nonce-aggregation))
 - Else:
   - Let final nonce *R = R'*
-- Let *e = scalar_from_bytes_wrapping(hash<sub>BIP0340/challenge</sub>((xbytes(R) || xbytes(Q) || m)))*
+- Let *e = scalar_from_bytes_wide(hash(bytes(R) || thresh_pk || m))*[^untagged-challenge]
 - Fail if *e = Scalar(0)*[^negligible-zero-scalar]
-- Return (Q, gacc, tacc, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, b, R, e)
+- Return *(id<sub>1..u</sub>, pubshare<sub>1..u</sub>, b, R, e)*
 
 Internal Algorithm *SerializeIds(id<sub>1..u</sub>)*:
 
@@ -520,6 +412,8 @@ Internal Algorithm *SerializeIds(id<sub>1..u</sub>)*:
 - For *i = 1..u*:
   - *res = res || bytes(4, sorted_id<sub>i</sub>)*
 - Return *res*
+
+[^untagged-challenge]: The challenge *e* is deliberately computed without a tag, exactly as specified in [RFC 8032][rfc8032]. This is what makes the aggregate signature an ordinary Ed25519 signature (see [Signature Verification](#signature-verification)). All other hashes in this document are domain-separated with tags under the *FROST3-ed25519-v1/* namespace.
 
 [^canonical-ids-det-sign]: The identifiers are sorted so that *b* commits to the signer *set*, not the order they appear in. This matters for *DeterministicSign*, where a signer reproduces the same secret nonce *(k<sub>1</sub>, k<sub>2</sub>)* whenever its inputs are unchanged. Suppose an implementation sorts the identifiers when deriving this nonce but not when deriving *b*. A malicious coordinator can then replay one signing session under three orderings of the same signer set: the victim returns the same nonce each time, but *b* and the challenge *e* change with the order. The three partial signatures *s = k<sub>1</sub> + b k<sub>2</sub> + e &lambda; d* form a system of three linear equations in *(k<sub>1</sub>, k<sub>2</sub>, d)*, which the coordinator solves to recover the secret share *d*. Sorting prevents this. It is the order analog of the attack in [^det-signer-set].
 
@@ -532,20 +426,17 @@ Algorithm *Sign(secnonce, secshare, my_id, session_ctx)*:
   - The participant secret share *secshare*: a 32-byte array, serialized scalar
   - The participant identifier *my_id*: an integer with *0 ≤ my_id ≤ n-1*
   - The *session_ctx*: a [Session Context](#session-context) data structure
-- Let *(Q, gacc, _, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, b, R, e) = GetSessionValues(session_ctx)*; fail if that fails
-- Let *k<sub>1</sub>' = scalar_from_bytes_nonzero_checked(secnonce[0:32])*; fail if that fails
-- Let *k<sub>2</sub>' = scalar_from_bytes_nonzero_checked(secnonce[32:64])*; fail if that fails
-- Let *k<sub>1</sub> = k<sub>1</sub>', k<sub>2</sub> = k<sub>2</sub>'* if *has_even_y(R)*, otherwise let *k<sub>1</sub> = -k<sub>1</sub>', k<sub>2</sub> = -k<sub>2</sub>'*
-- Let *d' = scalar_from_bytes_nonzero_checked(secshare)*; fail if that fails
-- Let *pubshare = cbytes(d' &middot; G)*
+- Let *(id<sub>1..u</sub>, pubshare<sub>1..u</sub>, b, _, e) = GetSessionValues(session_ctx)*; fail if that fails
+- Let *k<sub>1</sub> = scalar_from_bytes_nonzero_checked(secnonce[0:32])*; fail if that fails
+- Let *k<sub>2</sub> = scalar_from_bytes_nonzero_checked(secnonce[32:64])*; fail if that fails
+- Let *d = scalar_from_bytes_nonzero_checked(secshare)*; fail if that fails
+- Let *pubshare = bytes(d &middot; B)*
 - Fail if *pubshare* not in *pubshare<sub>1..u</sub>*
 - Fail if *my_id* not in *id<sub>1..u</sub>*
 - Let *&lambda; = DeriveInterpolatingValue(id<sub>1..u</sub>, my_id)*; fail if that fails
-- Let *g = Scalar(1)* if *has_even_y(Q)*, otherwise let *g = Scalar(-1)*
-- Let *d = g &middot; gacc &middot; d' &ensp;(mod ord)* (See [Negation of the Secret Share when Signing](#negation-of-the-secret-share-when-signing))
-- Let *s = k<sub>1</sub> + b &middot; k<sub>2</sub> + e &middot; &lambda; &middot; d &ensp;(mod ord)*
+- Let *s = k<sub>1</sub> + b &middot; k<sub>2</sub> + e &middot; &lambda; &middot; d &ensp;(mod L)*
 - Let *psig = scalar_to_bytes(s)*
-- Let *pubnonce = cbytes(k<sub>1</sub>' &middot; G) || cbytes(k<sub>2</sub>' &middot; G)*
+- Let *pubnonce = bytes(k<sub>1</sub> &middot; B) || bytes(k<sub>2</sub> &middot; B)*
 - If *PartialSigVerifyInternal(psig, my_id, pubnonce, pubshare, session_ctx)* (see below) returns failure, fail[^why-verify-partialsig]
 - Return partial signature *psig*
 
@@ -553,38 +444,34 @@ Algorithm *Sign(secnonce, secshare, my_id, session_ctx)*:
 
 ### Partial Signature Verification
 
-Algorithm *PartialSigVerify(psig, pubnonce<sub>1..u</sub>, signers_ctx, tweak<sub>1..v</sub>, is_xonly_t<sub>1..v</sub>, m, i)*:
+Both *PartialSigVerify* and the self-check that *Sign* runs on its own partial signature delegate the core verification to the internal *PartialSigVerifyInternal* algorithm defined below.
+
+Algorithm *PartialSigVerify(psig, pubnonce<sub>1..u</sub>, signers_ctx, m, i)*:
 
 - Inputs:
   - The partial signature *psig*: a 32-byte array, serialized scalar
-  - The list of public nonces *pubnonce<sub>1..u</sub>*: *u* 66-byte arrays, each an output of *NonceGen*
+  - The list of public nonces *pubnonce<sub>1..u</sub>*: *u* 64-byte arrays, each an output of *NonceGen*
   - The *signers_ctx*: a [Signers Context](#signers-context) data structure
-  - The number *v* of tweaks with *0 ≤ v < 2^32*
-  - The list of tweaks *tweak<sub>1..v</sub>*: *v* 32-byte arrays, each a serialized scalar
-  - The list of tweak modes *is_xonly_t<sub>1..v</sub>* : *v* booleans
   - The message *m*: a byte array[^max-msg-len]
   - The index *i* of the signer in the list of public nonces where *0 ≤ i ≤ u - 1*
-- ValidateSignersCtx(signers_ctx); fail if that fails
-- Let *(_, _, u, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, _) = signers_ctx*
+- *ValidateSignersCtx(signers_ctx)*; fail if that fails
+- Let *(_, _, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, _) = signers_ctx*
 - Let *aggnonce = NonceAgg(pubnonce<sub>1..u</sub>)*; fail if that fails
-- Let *session_ctx = (signers_ctx, aggnonce, v, tweak<sub>1..v</sub>, is_xonly_t<sub>1..v</sub>, m)*
+- Let *session_ctx = (signers_ctx, aggnonce, m)*
 - Run *PartialSigVerifyInternal(psig, id<sub>i</sub>, pubnonce<sub>i</sub>, pubshare<sub>i</sub>, session_ctx)*
 - Return success iff no failure occurred before reaching this point.
 
 Internal Algorithm *PartialSigVerifyInternal(psig, my_id, pubnonce, pubshare, session_ctx)*:
 
-- Let *(Q, gacc, _, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, b, R, e) = GetSessionValues(session_ctx)*; fail if that fails
+- Let *(id<sub>1..u</sub>, pubshare<sub>1..u</sub>, b, _, e) = GetSessionValues(session_ctx)*; fail if that fails
 - Let *s = scalar_from_bytes_checked(psig)*; fail if that fails
 - Fail if *pubshare* not in *pubshare<sub>1..u</sub>*
 - Fail if *my_id* not in *id<sub>1..u</sub>*
-- Let *R<sub>\*,1</sub> = cpoint(pubnonce[0:33]), R<sub>\*,2</sub> = cpoint(pubnonce[33:66])*; fail if either fails
-- Let *Re<sub>\*</sub>' = R<sub>\*,1</sub> + b &middot; R<sub>\*,2</sub>*
-- Let effective nonce *Re<sub>\*</sub> = Re<sub>\*</sub>'* if *has_even_y(R)*, otherwise let *Re<sub>\*</sub> = -Re<sub>\*</sub>'*
-- Let *P = cpoint(pubshare)*; fail if that fails
+- Let *R<sub>\*,1</sub> = point(pubnonce[0:32]), R<sub>\*,2</sub> = point(pubnonce[32:64])*; fail if either fails
+- Let effective nonce *Re<sub>\*</sub> = R<sub>\*,1</sub> + b &middot; R<sub>\*,2</sub>*
+- Let *P = point(pubshare)*; fail if that fails
 - Let *&lambda; = DeriveInterpolatingValue(id<sub>1..u</sub>, my_id)*[^lambda-cant-fail]
-- Let *g = Scalar(1)* if *has_even_y(Q)*, otherwise let *g = Scalar(-1)*
-- Let *g' = g &middot; gacc &ensp;(mod ord)* (See [Negation of the Pubshare when Partially Verifying](#negation-of-the-pubshare-when-partially-verifying))
-- Fail if *s &middot; G ≠ Re<sub>\*</sub> + e &middot; &lambda; &middot; g' &middot; P*
+- Fail if *s &middot; B ≠ Re<sub>\*</sub> + e &middot; &lambda; &middot; P*
 - Return success iff no failure occurred before reaching this point.
 
 [^lambda-cant-fail]: *DeriveInterpolatingValue(id<sub>1..u</sub>, my_id)* cannot fail when called from *PartialSigVerifyInternal* as *PartialSigVerify* picks *my_id* from *id<sub>1..u</sub>*
@@ -594,19 +481,40 @@ Internal Algorithm *PartialSigVerifyInternal(psig, my_id, pubnonce, pubshare, se
 Algorithm *PartialSigAgg(psig<sub>1..u</sub>, session_ctx)*:
 
 - Inputs:
-  - The number *u* of signers with *t ≤ u ≤ n*
   - The list of partial signatures *psig<sub>1..u</sub>*: *u* 32-byte arrays, each an output of *Sign*
   - The *session_ctx*: a [Session Context](#session-context) data structure
-- Let *(Q, _, tacc, _, _, _, R, e) = GetSessionValues(session_ctx)*; fail if that fails
+- Let *(id<sub>1..u</sub>, _, _, R, _) = GetSessionValues(session_ctx)*; fail if that fails
 - For *i = 1 .. u*:
   - Let *s<sub>i</sub> = scalar_from_bytes_checked(psig<sub>i</sub>)*; fail if that fails and blame signer at index *i* for invalid partial signature.
-- Let *g = Scalar(1)* if *has_even_y(Q)*, otherwise let *g = Scalar(-1)*
-- Let *s = s<sub>1</sub> + ... + s<sub>u</sub> + e &middot; g &middot; tacc &ensp;(mod ord)*
-- Return *sig = xbytes(R) || scalar_to_bytes(s)*
+- Let *s = s<sub>1</sub> + ... + s<sub>u</sub> &ensp;(mod L)*
+- Return *sig = bytes(R) || scalar_to_bytes(s)*
+
+### Signature Verification
+
+The output of *PartialSigAgg* is an ordinary Ed25519 signature: the challenge is computed exactly as specified in [RFC 8032][rfc8032] (see [^untagged-challenge]), so the signature can be verified for the threshold public key *thresh_pk* and message *m* by any conforming Ed25519 verifier.
+
+RFC 8032 leaves verifiers a choice between two group equations: the *cofactored* check *\[8]\[s]B = \[8]R + \[8]\[e]A* and the *cofactorless* check *\[s]B = R + \[e]A*. The two disagree only on signatures containing points outside the prime-order subgroup, which honest signers never produce. This document specifies the cofactorless equation together with a strict decoding policy. The cofactorless equation is the stricter of the two permitted choices and the one implemented by widely deployed verifiers (e.g., libsodium and ed25519-dalek's `verify_strict`); the decoding policy specified here is stricter than both, rejecting mixed-order points that those verifiers accept because they screen out only small-order points:
+
+Algorithm *Verify(thresh_pk, m, sig)*:
+
+- Inputs:
+  - The threshold public key *thresh_pk*: a 32-byte array, serialized point
+  - The message *m*: a byte array[^max-msg-len]
+  - The signature *sig*: a 64-byte array
+- Let *A = point(thresh_pk)*; fail if that fails
+- Let *R = point(sig[0:32])*; fail if that fails
+- Let *s = scalar_from_bytes_checked(sig[32:64])*; fail if that fails
+- Let *e = scalar_from_bytes_wide(hash(sig[0:32] || thresh_pk || m))*
+- Fail if *s &middot; B ≠ R + e &middot; A*
+- Return success iff no failure occurred before reaching this point.
+
+Because *point(b)* rejects non-canonical encodings, points outside the prime-order subgroup, and the identity element, every component of an accepted signature is canonical and of prime order. Signatures produced by this protocol satisfy these conditions by construction, so they are accepted both by this verifier and by more permissive RFC 8032 verifiers (cofactored, or without subgroup checks). The converse does not hold: verifiers may disagree on adversarially crafted signatures containing small-order or mixed-order points. Applications in which multiple parties must reach the same verdict on signature validity should therefore agree on a single verification policy, such as the one specified here.
+
+Note that *PartialSigVerifyInternal* checks each signer's contribution with the same cofactorless equation, restricted to that signer's effective nonce and public share.
 
 ### Test Vectors & Reference Code
 
-We provide a naive, highly inefficient, and non-constant time [pure Python 3 reference implementation of the threshold public key tweaking, nonce generation, partial signing, and partial signature verification algorithms](./python/frost_ref/).
+We provide a naive, highly inefficient, and non-constant time [pure Python 3 reference implementation of the nonce generation, partial signing, and partial signature verification algorithms](./python/frost_ref/).
 
 Standalone JSON test vectors are also available in the [same directory](./python/vectors/), to facilitate porting the test vectors into other implementations.
 
@@ -640,237 +548,68 @@ In FROST, the deterministic nonce must also bind to the signer set *id<sub>1..u<
 
 #### Deterministic and Stateless Signing for a Single Signer
 
-Algorithm *DeterministicSign(secshare, my_id, aggothernonce, signers_ctx, tweak<sub>1..v</sub>, is_xonly_t<sub>1..v</sub>, m, aux_rand)*:
+Algorithm *DeterministicSign(secshare, my_id, aggothernonce, signers_ctx, m, aux_rand)*:
 
 - Inputs:
   - The participant secret share *secshare*: a 32-byte array, serialized scalar
   - The participant identifier *my_id*: an integer with *0 ≤ my_id ≤ n-1*
-  - The aggregate public nonce *aggothernonce* (see [above](#modifications-to-nonce-generation)): a 66-byte array, output of *NonceAgg* (optional argument)[^det-threshold-one]
+  - The aggregate public nonce *aggothernonce* (see [above](#modifications-to-nonce-generation)): a 64-byte array, output of *NonceAgg* (optional argument)[^det-threshold-one]
   - The *signers_ctx*: a [Signers Context](#signers-context) data structure
-  - The number *v* of tweaks with *0 ≤ v < 2^32*
-  - The list of tweaks *tweak<sub>1..v</sub>*: *v* 32-byte arrays, each a serialized scalar
-  - The list of tweak modes *is_xonly_t<sub>1..v</sub>*: *v* booleans
   - The message *m*: a byte array[^max-msg-len]
   - The auxiliary randomness *aux_rand*: a 32-byte array (optional argument)
 - If the optional argument *aux_rand* is present:
-  - Let *secshare' = xor_bytes(secshare, hash<sub>BIP0445/aux</sub>(aux_rand))*
+  - Let *secshare' = xor_bytes(secshare, hash<sub>FROST3-ed25519-v1/aux</sub>(aux_rand)\[0:32])*[^sk-xor-rand]
 - Else:
   - Let *secshare' = secshare*
+- *ValidateSignersCtx(signers_ctx)*; fail if that fails
+- Let *(_, _, id<sub>1..u</sub>, _, thresh_pk) = signers_ctx*
 - If the optional argument *aggothernonce* is present:
   - Let *aggothernonce' = aggothernonce*
 - Else:
   - Let *aggothernonce' = empty_bytestring*
-- Let *(_, _, u, id<sub>1..u</sub>, pubshare<sub>1..u</sub>, thresh_pk) = signers_ctx*
-- Let *tweak_ctx<sub>0</sub> = TweakCtxInit(thresh_pk)*; fail if that fails
-- For *i = 1 .. v*:
-  - Let *tweak_ctx<sub>i</sub> = ApplyTweak(tweak_ctx<sub>i-1</sub>, tweak<sub>i</sub>, is_xonly_t<sub>i</sub>)*; fail if that fails
-- Let *tweaked_thresh_pk_xonly = GetXonlyPubkey(tweak_ctx<sub>v</sub>)*
-- Let *k<sub>i</sub> = scalar_from_bytes_wrapping(hash<sub>BIP0445/deterministic/nonce</sub>(secshare' || bytes(4, my_id) || bytes(4, u) || SerializeIds(id<sub>1..u</sub>) || aggothernonce' || tweaked_thresh_pk_xonly || bytes(8, len(m)) || m || bytes(1, i - 1)))* for *i = 1,2*
+- Let *k<sub>i</sub> = scalar_from_bytes_wide(hash<sub>FROST3-ed25519-v1/deterministic/nonce</sub>(secshare' || bytes(4, my_id) || bytes(4, u) || SerializeIds(id<sub>1..u</sub>) || aggothernonce' || thresh_pk || bytes(8, len(m)) || m || bytes(1, i - 1)))* for *i = 1,2*
 - Fail if *k<sub>1</sub> = Scalar(0)* or *k<sub>2</sub> = Scalar(0)*[^negligible-zero-scalar]
-- Let *R<sub>\*,1</sub> = k<sub>1</sub> &middot; G, R<sub>\*,2</sub> = k<sub>2</sub> &middot; G*
-- Let *pubnonce = cbytes(R<sub>\*,1</sub>) || cbytes(R<sub>\*,2</sub>)*
+- Let *R<sub>\*,1</sub> = k<sub>1</sub> &middot; B, R<sub>\*,2</sub> = k<sub>2</sub> &middot; B*
+- Let *pubnonce = bytes(R<sub>\*,1</sub>) || bytes(R<sub>\*,2</sub>)*
 - Let *secnonce = scalar_to_bytes(k<sub>1</sub>) || scalar_to_bytes(k<sub>2</sub>)*
 - If the optional argument *aggothernonce* is present:
   - Let *aggnonce = NonceAgg((pubnonce, aggothernonce))*; fail if that fails and blame coordinator for invalid *aggothernonce*.
 - Else:
   - Let *aggnonce = pubnonce*
-- Let *session_ctx = (signers_ctx, aggnonce, v, tweak<sub>1..v</sub>, is_xonly_t<sub>1..v</sub>, m)*
-- Return (pubnonce, Sign(secnonce, secshare, my_id, session_ctx))
+- Let *session_ctx = (signers_ctx, aggnonce, m)*
+- Return *(pubnonce, Sign(secnonce, secshare, my_id, session_ctx))*
 
 [^det-signer-set]: Without binding to the signer set, a malicious coordinator can replay the same *aggothernonce* to the last signer across three sessions while varying *id<sub>1..u</sub>*. The victim produces byte-identical secret nonces *(k<sub>1</sub>, k<sub>2</sub>)* across sessions, but because the Lagrange interpolating coefficient *&lambda;* and nonce coefficient *b* depend on the signer set, the three partial signatures form a system of three linear equations in *(k<sub>1</sub>, k<sub>2</sub>, d)* where *d* is the victim's secret share, enough to recover *d* by solving the system. This consideration does not apply to MuSig2's *DeterministicSign* because MuSig2 is always *n*-of-*n* and the signer set is fixed by the protocol.
 
-[^det-threshold-one]: The threshold *t = 1* is a special case. In a *1-of-n* setup, every participant's *secret share* equals the *threshold secret key* itself, so any single participant can produce a signature alone (*u = 1*). The lone signer calls *DeterministicSign* without the *aggothernonce* argument, which makes the derived nonce fully deterministic, just as in ordinary single-signer [BIP340][bip340] signing. The signer may instead run *Sign*, but that path still draws fresh randomness through *NonceGen*. Simplest of all, because a *1-of-n* group is effectively one secret key held by everyone, the participant can skip the FROST algorithms and sign with the ordinary [BIP340][bip340] signing algorithm[^t-edge-cases].
+[^det-threshold-one]: The threshold *t = 1* is a special case. In a *1-of-n* setup, every participant's *secret share* equals the *threshold secret key* itself, so any single participant can produce a signature alone (*u = 1*). The lone signer calls *DeterministicSign* without the *aggothernonce* argument, which makes the derived nonce fully deterministic, just as in ordinary single-signer Ed25519 signing ([RFC 8032][rfc8032]). The signer may instead run *Sign*, but that path still draws fresh randomness through *NonceGen*. Simplest of all, because a *1-of-n* group is effectively one secret key held by everyone, the participant can skip the FROST algorithms and sign with the ordinary Schnorr signing algorithm[^t-edge-cases].
 
-### Tweaking Definition
+### Dealing with the Identity Element in Nonce Aggregation
 
-Two modes of tweaking the threshold public key are supported. They correspond to the following algorithms:
-
-Algorithm *ApplyPlainTweak(P, t)*:
-
-- Inputs:
-  - *P*: a point
-  - The tweak *t*: a scalar
-- Return *P + t &middot; G*
-
-Algorithm *ApplyXonlyTweak(P, t)*:
-
-- Inputs:
-  - *P*: a point
-  - The tweak *t*: a scalar
-- Return *with_even_y(P) + t &middot; G*
-
-### Negation of the Secret Share when Signing
-
-In the following equations, all scalar arithmetic is understood to be modulo the group order, as specified in the [Notation](#notation) section.
-
-During the signing process, the *[Sign](#signing)* algorithm might have to negate the secret share in order to produce a partial signature for an X-only threshold public key, which may be tweaked *v* times (X-only or plain).
-
-The following elliptic curve points arise as intermediate steps when creating a signature:
-
-- The values *P<sub>i</sub>* (pubshare), *d<sub>i</sub>'* (secret share), and *Q<sub>0</sub>* (threshold public key) are produced by a FROST key generation protocol. We have  
-  <pre>
-    P<sub>i</sub> = d<sub>i</sub>'&middot;G
-    Q<sub>0</sub> = &lambda;<sub>id<sub>1</sub></sub>&middot;P<sub>1</sub> + &lambda;<sub>id<sub>2</sub></sub>&middot;P<sub>2</sub> + ... + &lambda;<sub>id<sub>u</sub></sub>&middot;P<sub>u</sub>
-  </pre>  
-  Here, *&lambda;<sub>id<sub>i</sub></sub>* denotes the interpolating value for the *i*-th signer in the [Signers Context](#signers-context).
-
-- *Q<sub>i</sub>* is the tweaked threshold public key after the *i*-th execution of *ApplyTweak* for *1 ≤ i ≤ v*. It holds that  
-  <pre>
-    Q<sub>i</sub> = f(i-1) + t<sub>i</sub>&middot;G for i = 1, ..., v where
-      f(i-1) := with_even_y(Q<sub>i-1</sub>) if is_xonly_t<sub>i</sub> and
-      f(i-1) := Q<sub>i-1</sub> otherwise.
-  </pre>
-- *with_even_y(Q*<sub>v</sub>*)* is the final result of the threshold public key tweaking operations. It corresponds to the output of *GetXonlyPubkey* applied on the final Tweak Context.
-
-The signer's goal is to produce a partial signature corresponding to the final result of threshold pubkey derivation and tweaking, i.e., the X-only public key *with_even_y(Q<sub>v</sub>)*.
-
-For *1 ≤ i ≤ v*, we denote the value *g* computed in the *i*-th execution of *ApplyTweak* by *g<sub>i-1</sub>*. Therefore, *g<sub>i-1</sub>* equals *Scalar(-1)* if and only if *is_xonly_t<sub>i</sub>* is true and *Q<sub>i-1</sub>* has an odd y-coordinate. In other words, *g<sub>i-1</sub>* indicates whether *Q<sub>i-1</sub>* needed to be negated to apply an X-only tweak:
-<pre>
-  f(i-1) = g<sub>i-1</sub>&middot;Q<sub>i-1</sub> for 1 ≤ i ≤ v
-</pre>
-Furthermore, the *Sign* and *PartialSigVerify* algorithms set value *g* depending on whether Q<sub>v</sub> needed to be negated to produce the (X-only) final output. For consistency, this value *g* is referred to as *g<sub>v</sub>* in this section.
-<pre>
-  with_even_y(Q<sub>v</sub>) = g<sub>v</sub>&middot;Q<sub>v</sub>
-</pre>
-
-So, the (X-only) final public key is
-<pre>
-  with_even_y(Q<sub>v</sub>)
-    = g<sub>v</sub>&middot;Q<sub>v</sub>
-    = g<sub>v</sub>&middot;(f(v-1) + t<sub>v</sub>&middot;G)
-    = g<sub>v</sub>&middot;(g<sub>v-1</sub>&middot;(f(v-2) + t<sub>v-1</sub>&middot;G) + t<sub>v</sub>&middot;G)
-    = g<sub>v</sub>&middot;g<sub>v-1</sub>&middot;f(v-2) + g<sub>v</sub>&middot;(t<sub>v</sub> + g<sub>v-1</sub>&middot;t<sub>v-1</sub>)&middot;G
-    = g<sub>v</sub>&middot;g<sub>v-1</sub>&middot;f(v-2) + (sum<sub>i=v-1..v</sub> t<sub>i</sub> &middot; prod<sub>j=i..v</sub> g<sub>j</sub>)&middot;G
-    = g<sub>v</sub>&middot;g<sub>v-1</sub>&middot; ... &middot;g<sub>1</sub>&middot;f(0) + (sum<sub>i=1..v</sub> t<sub>i</sub> &middot; prod<sub>j=i..v</sub> g<sub>j</sub>)&middot;G
-    = g<sub>v</sub>&middot; ... &middot;g<sub>0</sub>&middot;Q<sub>0</sub> + g<sub>v</sub>&middot;tacc<sub>v</sub>&middot;G
-</pre>
-where tacc<sub>i</sub> is computed by TweakCtxInit and ApplyTweak as follows:
-<pre>
-  tacc<sub>0</sub> = 0 &ensp;(mod ord)
-  tacc<sub>i</sub> = t<sub>i</sub> + g<sub>i-1</sub>&middot;tacc<sub>i-1</sub> &ensp;(mod ord) for i=1..v
-</pre>
-  for which it holds that
-<pre>
-  g<sub>v</sub>&middot;tacc<sub>v</sub> = sum<sub>i=1..v</sub> t<sub>i</sub> &middot; prod<sub>j=i..v</sub> g<sub>j</sub> &ensp;(mod ord)
-</pre>
-
-*TweakCtxInit* and *ApplyTweak* compute
-<pre>
-  gacc<sub>0</sub> = 1 &ensp;(mod ord)
-  gacc<sub>i</sub> = g<sub>i-1</sub> &middot; gacc<sub>i-1</sub> &ensp;(mod ord) for i=1..v
-</pre>
-So we can rewrite above equation for the final public key as
-<pre>
-  with_even_y(Q<sub>v</sub>) = g<sub>v</sub> &middot; gacc<sub>v</sub> &middot; Q<sub>0</sub> + g<sub>v</sub> &middot; tacc<sub>v</sub> &middot; G
-</pre>
-
-Then we have
-<pre>
-  with_even_y(Q<sub>v</sub>) - g<sub>v</sub>&middot;tacc<sub>v</sub>&middot;G
-    = g<sub>v</sub>&middot;gacc<sub>v</sub>&middot;Q<sub>0</sub>
-    = g<sub>v</sub>&middot;gacc<sub>v</sub>&middot;(&lambda;<sub>id<sub>1</sub></sub>&middot;P<sub>1</sub> + ... + &lambda;<sub>id<sub>u</sub></sub>&middot;P<sub>u</sub>)
-    = g<sub>v</sub>&middot;gacc<sub>v</sub>&middot;(&lambda;<sub>id<sub>1</sub></sub>&middot;d<sub>1</sub>'&middot;G + ... + &lambda;<sub>id<sub>u</sub></sub>&middot;d<sub>u</sub>'&middot;G)
-    = sum<sub>j=1..u</sub>(g<sub>v</sub>&middot;gacc<sub>v</sub>&middot;&lambda;<sub>id<sub>j</sub></sub>&middot;d<sub>j</sub>')&middot;G
-</pre>
-
-Intuitively, *gacc<sub>i</sub>* tracks accumulated sign flipping and *tacc<sub>i</sub>* tracks the accumulated tweak value after applying the first *i* individual tweaks. Additionally, *g<sub>v</sub>* indicates whether *Q<sub>v</sub>* needed to be negated to produce the final X-only result. Thus, signer *i* multiplies their secret share *d<sub>i</sub>'* with *g<sub>v</sub>&middot;gacc<sub>v</sub>* in the [*Sign*](#signing) algorithm.
-
-#### Negation of the Pubshare when Partially Verifying
-
-As explained in [Negation of the Secret Share when Signing](#negation-of-the-secret-share-when-signing) the signer uses a possibly negated secret share
-<pre>
-  d = g<sub>v</sub>&middot;gacc<sub>v</sub>&middot;d' &ensp;(mod ord)
-</pre>
-when producing a partial signature to ensure that the aggregate signature will correspond to a threshold public key with even y-coordinate.
-
-The [*PartialSigVerifyInternal*](#partial-signature-verification) algorithm is supposed to check
-<pre>
-  s&middot;G = Re<sub>*</sub> + e&middot;&lambda;&middot;d&middot;G
-</pre>
-
-The verifier doesn't have access to *d &middot; G* but can construct it using the participant *pubshare* as follows:
-<pre>
-d&middot;G
-  = g<sub>v</sub> &middot; gacc<sub>v</sub> &middot; d' &middot; G
-  = g<sub>v</sub> &middot; gacc<sub>v</sub> &middot; cpoint(pubshare)
-</pre>
-Note that the threshold public key and list of tweaks are inputs to partial signature verification, so the verifier can also construct *g<sub>v</sub>* and *gacc<sub>v</sub>*.
-
-### Dealing with Infinity in Nonce Aggregation
-
-If the coordinator provides *aggnonce = bytes(33,0) || bytes(33,0)*, either the coordinator is dishonest or there is at least one dishonest signer (except with negligible probability).
+If the coordinator provides *aggnonce = bytes_ext(identity) || bytes_ext(identity)*, either the coordinator is dishonest or there is at least one dishonest signer (except with negligible probability).
 If signing aborted in this case, it would be impossible to determine who is dishonest.
 Therefore, signing continues so that the culprit is revealed when collecting and verifying partial signatures.
 
-However, the final nonce *R* of a BIP340 Schnorr signature cannot be the point at infinity.
-If we would nonetheless allow the final nonce to be the point at infinity, then the scheme would lose the following property:
-if *PartialSigVerify* succeeds for all partial signatures, then *PartialSigAgg* will return a valid Schnorr signature.
-Since this is a valuable feature, we modify [FROST3 signing][roast] to avoid producing an invalid Schnorr signature while still allowing detection of the dishonest signer: In *GetSessionValues*, if the final nonce *R* would be the point at infinity, set it to the generator instead (an arbitrary choice).
+However, the final nonce *R* of an Ed25519 signature produced by this protocol cannot be the identity element.
+While the identity is encodable on Ed25519, the verification procedure specified in [Signature Verification](#signature-verification) rejects any signature whose *R* is not a non-identity point of the prime-order subgroup, so a signature with *R* equal to the identity could never verify.
+If we would nonetheless allow the final nonce to be the identity element, then the scheme would lose the following property:
+if *PartialSigVerify* succeeds for all partial signatures, then *PartialSigAgg* will return a valid Ed25519 signature.
+Since this is a valuable feature, we modify [FROST3 signing][roast] to avoid producing an invalid Ed25519 signature while still allowing detection of the dishonest signer: In *GetSessionValues*, if the final nonce *R* would be the identity element, set it to the base point *B* instead (an arbitrary choice).
 
 This modification to *GetSessionValues* does not affect the unforgeability of the scheme.
 Given a successful adversary against the unforgeability game (EUF-CMA) for the modified scheme, a reduction can win the unforgeability game for the original scheme by simulating the modification towards the adversary:
-When the adversary provides *aggnonce' = bytes(33, 0) || bytes(33, 0)*, the reduction sets *aggnonce = cbytes_ext(G) || bytes(33, 0)*.
+When the adversary provides *aggnonce' = bytes_ext(identity) || bytes_ext(identity)*, the reduction sets *aggnonce = bytes(B) || bytes_ext(identity)*.
 For any other *aggnonce'*, the reduction sets *aggnonce = aggnonce'*.
-(The case that the adversary provides an *aggnonce' ≠ bytes(33, 0) || bytes(33, 0)* but nevertheless *R'* in *GetSessionValues* is the point at infinity happens only with negligible probability.)
-
-## Backwards Compatibility
-
-This document proposes a standard for the FROST threshold signature scheme that is compatible with [BIP340][bip340]. FROST is *not* compatible with ECDSA signatures traditionally used in Bitcoin.
-
-## Changelog
-
-- *0.8.0* (2026-07-30): Prefix the *noncecoef* hash input with the number of signers *u*, so that distinct *(id<sub>1..u</sub>, aggnonce, Q, m)* tuples can no longer map to the same nonce coefficient *b*. The affected test vectors were regenerated.
-- *0.7.0* (2026-07-23): Introduces the following changes:
-  - Relax the lower bound on the total number of participants *n* from 2 to 1, and extend the edge-case footnote to cover the *n = 1* setup.
-  - Rename *NonceGen*'s optional *thresh_pk* argument to *thresh_pk_xonly* and *DeterministicSign*'s *rand* argument to *aux_rand*, and update the corresponding test vector fields.
-  - Adopt the ChillDKG BIP's distinction between a *participant* (took part in key generation) and a *signer* (takes part in this signing session).
-  - Rename the disruptive signer terminology to malicious signer, and fix minor inconsistencies in the BIP text.
-- *0.6.0* (2026-06-09): Expand test vectors to cover multiple (t, n) configurations (1-of-3, 2-of-3, 3-of-3, and 3-of-5) instead of the single 2-of-3 setup.
-- *0.5.2* (2026-06-03): Make *aggothernonce* an optional argument in *DeterministicSign*, allowing a sole signer in a *1-of-n* setup to sign without aggregating other signers' nonces.
-- *0.5.1* (2026-06-02): Add a footnote explaining why the signer identifiers are sorted when deriving the nonce coefficient *b*, which prevents a secret share recovery attack in *DeterministicSign*.
-- *0.5.0* (2026-05-21): Introduces the following changes:
-  - Restructure test vectors to use indexed pools, rename per-case *signer_index* to *my_id*, and rewrite per-case comments.
-  - Fix mismatches between the BIP spec and the reference implementation.
-  - Move pubshare deserialization from *DeriveThreshPubkey* into *ValidateSignersCtx*, which now blames the signer on an invalid pubshare.
-- *0.4.3* (2026-05-13): Expand test vector coverage for signing and tweaking error cases, and add a test vectors summary document.
-- *0.4.2* (2026-04-14): Bind *my_id* and the signer identifiers list into the *DeterministicSign* nonce hash to prevent a secret share recovery attack via replayed signing sessions.
-- *0.4.1* (2026-03-03): Assign blame to signer index (of the input list) instead of their identifier value
-- *0.4.0* (2026-01-30): Number 445 was assigned to this BIP.
-- *0.3.6* (2026-01-28): Add MIT license file for reference code and other auxiliary files.
-- *0.3.5* (2026-01-25): Update secp256k1lab to latest version, remove stub file, and fix formatting in the BIP text.
-- *0.3.4* (2026-01-01): Add an example file to the reference code.
-- *0.3.3* (2025-12-29): Replace the lengthy Introduction section with a concise Motivation section.
-- *0.3.2* (2025-12-20): Use 2-of-3 keys in test vectors.
-- *0.3.1* (2025-12-17): Update the Algorithms section to use secp256k1lab methods and types.
-- *0.3.0* (2025-12-15): Introduces the following changes:
-  - Introduce *SignersContext* and define key material compatibility with *ValidateSignersCtx*.
-  - Rewrite the signing protocol assuming a coordinator, add sequence diagram, and warn key generation protocols to output Taproot-safe *threshold public key*.
-  - Remove *GetSessionInterpolatingValue*, *SessionHasSignerPubshare*, *ValidatePubshares*, and *ValidateThreshPubkey* algorithms
-  - Revert back to initializing *TweakCtxInit* with threshold public key instead of *pubshares*
-- *0.2.3* (2025-11-25): Sync terminologies with the ChillDKG BIP.
-- *0.2.2* (2025-11-11): Remove key generation test vectors as key generation is out of scope for this specification.
-- *0.2.1* (2025-11-10): Vendor secp256k1lab library to provide *Scalar* and *GE* primitives. Restructure reference implementation into a Python package layout.
-- *0.2.0* (2025-04-11): Includes minor fixes and the following major changes:
-  - Initialize *TweakCtxInit* using individual *pubshares* instead of the threshold public key.
-  - Add Python script to automate generation of test vectors.
-  - Represent participant identifiers as 4-byte integers in the range *0..n - 1* (inclusive).
-- *0.1.0* (2024-07-31): Publication of draft BIP on the bitcoin-dev mailing list
-
-## Acknowledgments
-
-We thank Jonas Nick, Tim Ruffing, Jesse Posner, Sebastian Falbesoner, Chris Stewart, Illia Melnyk, Mariia Zhvanko, and Fadi Barbàra for their comments and contributions to this document.
+(The case that the adversary provides an *aggnonce' ≠ bytes_ext(identity) || bytes_ext(identity)* but nevertheless *R'* in *GetSessionValues* is the identity element happens only with negligible probability.)
 
 <!-- References -->
-[bip32]: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
-[bip340]: https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki
-[bip341]: https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki
-[bip342]: https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki
+[rfc8032]: https://www.rfc-editor.org/rfc/rfc8032.html
+[rfc9591]: https://www.rfc-editor.org/rfc/rfc9591.html
+[chilldkg]: https://github.com/mllwchrry/bip-frost-dkg
 [bip327]: https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki
+[bip-frost-signing-secp]: https://github.com/siv2r/bip-frost-signing
 [musig]: https://eprint.iacr.org/2018/068
 [frost1]: https://eprint.iacr.org/2020/852
 [frost2]: https://eprint.iacr.org/2021/1375
 [stronger-security-frost]: https://eprint.iacr.org/2022/833
 [olaf]: https://eprint.iacr.org/2023/899
 [roast]: https://eprint.iacr.org/2022/550
-[rerandomized-frost]: https://eprint.iacr.org/2024/436
-[rfc9591]: https://www.rfc-editor.org/rfc/rfc9591.html

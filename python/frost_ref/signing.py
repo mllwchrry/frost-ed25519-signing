@@ -224,13 +224,12 @@ def get_session_values(
     (signers_ctx, aggnonce, msg) = session_ctx
     validate_signers_ctx(signers_ctx)
     _, _, ids, pubshares, thresh_pk = signers_ctx
-    A = GE.from_bytes(thresh_pk)
     # sort the ids before serializing because ROAST paper considers them as a set
     ser_ids = serialize_ids(ids)
     b = Scalar.from_bytes_wide(
         tagged_hash(
             FROST_TAG_NONCECOEF,
-            len(ids).to_bytes(4, "big") + ser_ids + aggnonce + A.to_bytes() + msg,
+            len(ids).to_bytes(4, "big") + ser_ids + aggnonce + thresh_pk + msg,
         )
     )
     assert b != 0
@@ -247,7 +246,7 @@ def get_session_values(
     # keeps blame attribution runnable via partial_sig_verify.
     R = R_ if not R_.is_identity else B
     assert not R.is_identity
-    e = Scalar.from_bytes_wide(hash_sha512(R.to_bytes() + A.to_bytes() + msg))
+    e = Scalar.from_bytes_wide(hash_sha512(R.to_bytes() + thresh_pk + msg))
     assert e != 0
     return (ids, pubshares, b, R, e)
 
