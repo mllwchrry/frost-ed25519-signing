@@ -8,6 +8,7 @@ extend-ignore-re = [
 extend-exclude = [
     "*.excalidraw",
     "python/secp256k1lab/",
+    "python/ed25519lab/",
     "python/vectors/",
 ]
 
