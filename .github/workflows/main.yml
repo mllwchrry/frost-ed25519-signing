@@ -92,3 +92,19 @@ jobs:
         env:
           PYTHONPATH: ./python:./python/ed25519lab/src
         run: python3 -m unittest python.trusted_dealer
+  crosscheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+      - name: Install optional Python verifiers (solders = Solana, pynacl = libsodium)
+        run: pip install pynacl solders
+      - name: Build the dalek oracle
+        working-directory: python/crosscheck/oracle_dalek
+        run: cargo build --release
+      - name: Run interop cross-check against dalek, solders, and pynacl
+        working-directory: python/crosscheck
+        run: python3 run_crosscheck.py
