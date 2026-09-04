@@ -6,7 +6,10 @@
         "B4B937FCA95B2F1E93E41E62FC3C78818FF38A66096FAD6E7973E5C90006D321B862409FB5C4C4123DF2ABF7462B88F041AD36DD6864CE872FD5472BE363C531",
         "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC0F1225584444EC730446E231390781FFDD2F256E9FCBEB2F40DDDC2C2233D7F",
         "2C7BE86AB07488BA43E8E03D85A67625CFBF98C8544DE4C877241B7AAAFC7FE30200000000000000000000000000000000000000000000000000000000000000",
-        "1337036AC32D8F30D4589C3C1C595812CE0FFF40E37C6F5A97AB213F318290AD0000000000000000000000000000000000000000000000000000000000000000"
+        "1337036AC32D8F30D4589C3C1C595812CE0FFF40E37C6F5A97AB213F318290AD0000000000000000000000000000000000000000000000000000000000000000",
+        "F9E42D2EDC81D23367967352B47E4856B82578634E6C1DE72280CE8B60CE70C0003789297CE02DEFA2F4BC7635D1D7CE99B96D76EB91D31F905101674DDAB720",
+        "801F40EAAEE1EF8723279A28B2CF4037B889DAD222604678748B53ED0DB0DB920100000000000000000000000000000000000000000000000000000000000080",
+        "39289C8998FD69835C26B619E89848A7BF02B7CB7AD1BA1581CBC4506F2550CE0100000000000000000000000000000000000000000000000000000000000000"
     ],
     "valid_tests": [
         {
@@ -45,8 +48,38 @@
         },
         {
             "tc_id": 5,
-            "comment": "Public nonce is invalid: second half is not in the prime-order subgroup",
+            "comment": "Public nonce is invalid: second half is a small-order point",
             "pubnonce_indices": [6, 1],
+            "error": {
+                "type": "InvalidContributionError",
+                "signer_index": 0,
+                "contrib": "pubnonce"
+            }
+        },
+        {
+            "tc_id": 6,
+            "comment": "Public nonce is invalid: second half is a mixed-order point",
+            "pubnonce_indices": [7, 1],
+            "error": {
+                "type": "InvalidContributionError",
+                "signer_index": 0,
+                "contrib": "pubnonce"
+            }
+        },
+        {
+            "tc_id": 7,
+            "comment": "Public nonce is invalid: second half is the non-canonical identity encoding",
+            "pubnonce_indices": [8, 1],
+            "error": {
+                "type": "InvalidContributionError",
+                "signer_index": 0,
+                "contrib": "pubnonce"
+            }
+        },
+        {
+            "tc_id": 8,
+            "comment": "Public nonce is invalid: second half is the identity element",
+            "pubnonce_indices": [9, 1],
             "error": {
                 "type": "InvalidContributionError",
                 "signer_index": 0,

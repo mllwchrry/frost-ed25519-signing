@@ -77,6 +77,9 @@ jobs:
         run: pip install ruff
       - name: Run reference implementation tests
         run: ./python/tests.sh
+      - name: Check that test vectors are up to date
+        working-directory: python
+        run: ./gen_vectors.py && git diff --exit-code
   trusted_dealer_unit_tests:
     runs-on: ubuntu-latest
     steps:

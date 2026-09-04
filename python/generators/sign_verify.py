@@ -14,8 +14,11 @@ from generators.common import (
     CONFIGS,
     GROUP_ORDER,
     AGGNONCE_BAD_FIRST_HALF,
+    MIXED_ORDER_POINT,
+    NONCANONICAL_IDENTITY,
     NONCANONICAL_POINT,
     OFFCURVE_POINT,
+    TORSION_POINT,
     SharedGroupInputs,
     assign_tc_ids,
     bytes_list_to_hex,
@@ -35,6 +38,12 @@ from generators.common import (
 AGGNONCE_OFFCURVE = B.to_bytes() + OFFCURVE_POINT
 # Second half is a non-canonical encoding (y >= p).
 AGGNONCE_NONCANONICAL = B.to_bytes() + NONCANONICAL_POINT
+# Second half is a small-order (order-4 torsion) point, off the prime-order subgroup.
+AGGNONCE_TORSION = B.to_bytes() + TORSION_POINT
+# Second half is a mixed-order point [k]B + T, off the prime-order subgroup.
+AGGNONCE_MIXED_ORDER = B.to_bytes() + MIXED_ORDER_POINT
+# Second half is the non-canonical identity encoding (x == 0 with the sign bit set).
+AGGNONCE_NONCANONICAL_IDENTITY = B.to_bytes() + NONCANONICAL_IDENTITY
 
 
 class SignVerifyGroupBuilder:
@@ -345,21 +354,21 @@ class SignVerifyGroupBuilder:
                 "value",
                 "Signer's public share is not in the public share list",
             )
-        # A listed public share is off-curve (at position 1, so min2 forces size 2).
-        pubshare_indices_offcurve = [
+        # A listed public share is non-canonical (at position 1, so min2 forces size 2).
+        pubshare_indices_noncanonical = [
             self.min2[0],
             self.inputs.INVALID_PUBSHARE_IDX,
         ] + self.min2[2:]
         self._append_sign_error(
             0,
             self.min2,
-            pubshare_indices_offcurve,
+            pubshare_indices_noncanonical,
             0,
             0,
             self._agg(self.min2),
             COMMON_MSGS[0],
             "value",
-            "A public share is not a valid point",
+            "A public share's y-coordinate exceeds the field size",
         )
         # The crafted pool slot replaces the min2 set's last share, cancelling the
         # interpolation.
@@ -452,6 +461,39 @@ class SignVerifyGroupBuilder:
             COMMON_MSGS[0],
             "invalid_contrib",
             "Aggregate nonce is invalid: second half's y-coordinate exceeds the field size",
+        )
+        self._append_sign_error(
+            0,
+            self.min_s,
+            self.min_s,
+            0,
+            0,
+            AGGNONCE_TORSION,
+            COMMON_MSGS[0],
+            "invalid_contrib",
+            "Aggregate nonce is invalid: second half is a small-order point",
+        )
+        self._append_sign_error(
+            0,
+            self.min_s,
+            self.min_s,
+            0,
+            0,
+            AGGNONCE_MIXED_ORDER,
+            COMMON_MSGS[0],
+            "invalid_contrib",
+            "Aggregate nonce is invalid: second half is a mixed-order point",
+        )
+        self._append_sign_error(
+            0,
+            self.min_s,
+            self.min_s,
+            0,
+            0,
+            AGGNONCE_NONCANONICAL_IDENTITY,
+            COMMON_MSGS[0],
+            "invalid_contrib",
+            "Aggregate nonce is invalid: second half is the non-canonical identity encoding",
         )
         # All-zero secret nonce (first scalar out of range).
         self._append_sign_error(
@@ -575,16 +617,72 @@ class SignVerifyGroupBuilder:
             "invalid_contrib",
             "Verification rejects an invalid public nonce, blaming the malicious signer",
         )
-        # Off-curve public share at position 0.
-        pubshare_indices_offcurve = [self.inputs.INVALID_PUBSHARE_IDX] + self.min_s[1:]
+        # Non-canonical (y >= p) public share at position 0.
+        pubshare_indices_noncanonical = [self.inputs.INVALID_PUBSHARE_IDX] + self.min_s[
+            1:
+        ]
         self._append_verify_error(
             self.min_s,
-            pubshare_indices_offcurve,
+            pubshare_indices_noncanonical,
             self.min_s,
             0,
             psig_min,
             "value",
-            "A public share is not a valid point",
+            "A public share's y-coordinate exceeds the field size",
+        )
+        # Small-order public share (the all-zero order-4 torsion point) at
+        # position 0, rejected by the prime-order-subgroup check.
+        self._append_verify_error(
+            self.min_s,
+            [self.inputs.SMALL_ORDER_PUBSHARE_IDX] + self.min_s[1:],
+            self.min_s,
+            0,
+            psig_min,
+            "value",
+            "A public share is a small-order point",
+        )
+        # Mixed-order public share [k]B + T at position 0. Rejected by [L]P == O,
+        # which a small-order-only screen ([8]P == O) would let through.
+        self._append_verify_error(
+            self.min_s,
+            [self.inputs.MIXED_ORDER_PUBSHARE_IDX] + self.min_s[1:],
+            self.min_s,
+            0,
+            psig_min,
+            "value",
+            "A public share is a mixed-order point",
+        )
+        # Non-canonical identity public share (x == 0 with the sign bit set) at
+        # position 0.
+        self._append_verify_error(
+            self.min_s,
+            [self.inputs.NONCANONICAL_IDENTITY_PUBSHARE_IDX] + self.min_s[1:],
+            self.min_s,
+            0,
+            psig_min,
+            "value",
+            "A public share is the non-canonical identity encoding",
+        )
+        # Canonical identity public share (0x01 || 31 zero bytes) at position 0,
+        # rejected because the identity is not a valid public share.
+        self._append_verify_error(
+            self.min_s,
+            [self.inputs.CANONICAL_IDENTITY_PUBSHARE_IDX] + self.min_s[1:],
+            self.min_s,
+            0,
+            psig_min,
+            "value",
+            "A public share is the identity element",
+        )
+        # Off-curve public share (canonical y with no matching x) at position 0.
+        self._append_verify_error(
+            self.min_s,
+            [self.inputs.OFFCURVE_PUBSHARE_IDX] + self.min_s[1:],
+            self.min_s,
+            0,
+            psig_min,
+            "value",
+            "A public share is not a point on the curve",
         )
 
     def build(self) -> dict:
