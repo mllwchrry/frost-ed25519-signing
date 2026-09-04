@@ -11,7 +11,6 @@ from frost_ref import (
 
 from generators.common import (
     COMMON_MSGS,
-    COMMON_TWEAKS,
     CONFIGS,
     GROUP_ORDER,
     SharedGroupInputs,
@@ -45,17 +44,14 @@ class SigAggGroupBuilder:
         set_group_config(self.group, cfg, self.inputs)
         # sig_agg has no appended fault slots in any pool (both error faults are
         # injected inline), so the group serializes and reads the plain n-length
-        # pubshares and the 4 common tweaks, not the SharedGroupInputs pool_* arrays.
+        # pubshares, not the SharedGroupInputs pool_* arrays.
         self.group["pubshares"] = bytes_list_to_hex(self.inputs.pubshares)
-        self.group["tweaks"] = bytes_list_to_hex(COMMON_TWEAKS)
         self.group["valid_tests"] = []
         self.group["error_tests"] = []
 
     def _append_valid(
         self,
         set_indices: List[int],
-        tweak_indices: List[int],
-        is_xonly: List[bool],
         msg: bytes,
         comment: str,
         pubshares_absent: bool = False,
@@ -71,9 +67,8 @@ class SigAggGroupBuilder:
         pubnonces = [self.inputs.pubnonces[i] for i in set_indices]
         ids = list(set_indices)
         aggnonce = nonce_agg(pubnonces)
-        tweaks = [COMMON_TWEAKS[i] for i in tweak_indices]
         signer_set = (self.n, self.t, ids, pubshares, self.thresh_pk)
-        session = SessionContext(*signer_set, aggnonce, tweaks, is_xonly, msg)
+        session = SessionContext(*signer_set, aggnonce, msg)
         psigs = []
         for signer_index, my_id in enumerate(set_indices):
             psig = sign(
@@ -86,7 +81,7 @@ class SigAggGroupBuilder:
             if pubshares is not None:
                 verify_set = (self.n, self.t, ids, pubshares, self.thresh_pk)
                 assert partial_sig_verify(
-                    psig, pubnonces, *verify_set, tweaks, is_xonly, msg, signer_index
+                    psig, pubnonces, *verify_set, msg, signer_index
                 )
         expected = partial_sig_agg(psigs, session)
         self.group["valid_tests"].append(
@@ -95,8 +90,6 @@ class SigAggGroupBuilder:
                 "ids": ids,
                 "pubshare_indices": None if pubshares_absent else list(set_indices),
                 "aggnonce": bytes_to_hex(aggnonce),
-                "tweak_indices": tweak_indices,
-                "is_xonly": is_xonly,
                 "psigs": bytes_list_to_hex(psigs),
                 "msg": bytes_to_hex(msg),
                 "expected": bytes_to_hex(expected),
@@ -113,7 +106,7 @@ class SigAggGroupBuilder:
         aggnonce = nonce_agg(pubnonces)
         msg = COMMON_MSGS[0]
         signer_set = (self.n, self.t, ids, pubshares, self.thresh_pk)
-        session = SessionContext(*signer_set, aggnonce, [], [], msg)
+        session = SessionContext(*signer_set, aggnonce, msg)
         psigs = []
         for signer_index, my_id in enumerate(set_indices):
             psig = sign(
@@ -123,9 +116,7 @@ class SigAggGroupBuilder:
                 session,
             )
             psigs.append(psig)
-            assert partial_sig_verify(
-                psig, pubnonces, *signer_set, [], [], msg, signer_index
-            )
+            assert partial_sig_verify(psig, pubnonces, *signer_set, msg, signer_index)
 
         if fault == "psig_out_of_range":
             psigs[-1] = GROUP_ORDER
@@ -140,8 +131,6 @@ class SigAggGroupBuilder:
                 "ids": ids,
                 "pubshare_indices": list(set_indices),
                 "aggnonce": bytes_to_hex(aggnonce),
-                "tweak_indices": [],
-                "is_xonly": [],
                 "psigs": bytes_list_to_hex(psigs),
                 "msg": bytes_to_hex(msg),
                 "error": err,
@@ -155,15 +144,11 @@ class SigAggGroupBuilder:
         # Minimum threshold subset.
         sig_min = self._append_valid(
             self.min_s,
-            [],
-            [],
             COMMON_MSGS[0],
-            "Minimum threshold subset of signers, no tweaks",
+            "Minimum threshold subset of signers",
         )
         sig_no_pubshares = self._append_valid(
             self.min_s,
-            [],
-            [],
             COMMON_MSGS[0],
             "Public shares list is absent",
             pubshares_absent=True,
@@ -174,29 +159,17 @@ class SigAggGroupBuilder:
             rev = list(reversed(self.min_s))
             self._append_valid(
                 rev,
-                [],
-                [],
                 COMMON_MSGS[0],
                 "Reordering the signer set leaves the aggregate signature unchanged, because the partial signatures are summed and the identifiers are sorted before they are bound into the binding value",
             )
-        # Three tweaks applied (one x-only, two plain).
-        self._append_valid(
-            self.min_s,
-            [0, 1, 2],
-            [True, False, False],
-            COMMON_MSGS[0],
-            "Aggregation with three tweaks applied (one x-only, two plain)",
-        )
         # All n signers participate (dropped when t == n, as the all-n set
         # equals the minimum set and partial_sig_agg has no my_id field, so the
         # aggregate signature would be byte-identical to the minimum-subset case).
         if t < n:
             self._append_valid(
                 self.full,
-                [],
-                [],
                 COMMON_MSGS[0],
-                "All signers participate, no tweaks",
+                "All signers participate",
             )
 
     # --- Array B: error_tests ---
