@@ -2,6 +2,7 @@ from typing import List, Optional, Tuple
 
 from frost_ref import (
     InvalidContributionError,
+    PlainPk,
     deterministic_sign,
     nonce_agg,
 )
@@ -94,7 +95,7 @@ class DetSignGroupBuilder:
                 tmp,
                 self.inputs.pool_secshares[pid],
                 self.inputs.pool_pubshares[pid],
-                self.inputs.xonly_thresh_pk,
+                PlainPk(self.inputs.thresh_pk),
                 msg,
                 None,
             )

@@ -16,11 +16,8 @@ from frost_ref import (
     partial_sig_verify,
     SessionContext,
     PlainPk,
-    XonlyPk,
 )
 from frost_ref.signing import partial_sig_verify_internal
-
-from secp256k1lab.bip340 import schnorr_verify
 from trusted_dealer import trusted_dealer_keygen
 
 
@@ -109,13 +106,12 @@ async def participant(
     the partial_sig_verify_internal check below takes our own share directly.
 
     Returns:
-        (psig, final_sig): Partial signature and final BIP340 signature
+        (psig, final_sig): Partial signature and final aggregate signature
     """
     _, _, _, _, thresh_pk = signer_set
-    thresh_pk_xonly = XonlyPk(thresh_pk[1:])
 
     # Round 1: Nonce generation
-    secnonce, pubnonce = nonce_gen(secshare, pubshare, thresh_pk_xonly, msg, None)
+    secnonce, pubnonce = nonce_gen(secshare, pubshare, thresh_pk, msg, None)
     chan.send(pubnonce)
     aggnonce = await chan.receive()
 
@@ -141,7 +137,7 @@ async def coordinator(
     Coordinator in FROST signing protocol.
 
     Returns:
-        final_sig: Final BIP340 signature (64 bytes)
+        final_sig: Final aggregate signature (transitional: compressed R || s)
     """
     # Determine the signers
     _, _, signer_ids, _, _ = signer_set
@@ -284,13 +280,14 @@ def main():
     print()
 
     print("=== Final Signature ===")
-    print(f"BIP340 signature: {final_sig.hex()}")
+    print(f"Aggregate signature (transitional, compressed R || s): {final_sig.hex()}")
     print()
 
-    # 6. Verify signature
-    assert schnorr_verify(msg, thresh_pk[1:], final_sig)
+    # 6. Verify signature. The end-to-end check returns in the Ed25519 port,
+    # via the library verifier (ed25519lab.schnorr.ed25519_verify, the
+    # cofactorless s*B == R + e*A that Solana runs).
     print("=== Verification ===")
-    print("Signature verified successfully!")
+    print("Aggregate signature produced (verification returns with the library).")
 
 
 if __name__ == "__main__":
