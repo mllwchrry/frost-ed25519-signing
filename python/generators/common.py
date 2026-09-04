@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import secrets
 from collections import namedtuple
 from typing import Dict, List, Sequence, Union
 
@@ -11,9 +10,9 @@ from frost_ref.signing import (
     nonce_agg,
     nonce_gen_internal,
 )
-from secp256k1lab.secp256k1 import G, GE, Scalar
-from secp256k1lab.keys import pubkey_gen_plain
-from trusted_dealer import trusted_dealer_keygen
+from ed25519lab.ed25519 import B, GE, Scalar
+from ed25519lab.keys import pubkey_gen
+from trusted_dealer import random_seckey, trusted_dealer_keygen
 
 
 def bytes_to_hex(data: bytes) -> str:
@@ -76,22 +75,24 @@ COMMON_MSGS = [
     ),  # 38-byte message
 ]
 
-# secp256k1 group order n: the out-of-range boundary used by the
-# partial-signature generator
-GROUP_ORDER = GE.ORDER.to_bytes(32, "big")
-INVALID_PUBSHARE = bytes.fromhex(
-    "020000000000000000000000000000000000000000000000000000000000000007"
-)
+# Ed25519 group order L as a 32-byte little-endian scalar: the out-of-range
+# boundary used by the partial-signature generator
+GROUP_ORDER = GE.ORDER.to_bytes(32, "little")
 
-# Public nonce whose first half is an off-curve compressed point (x=9 not on the
-# curve) and whose second half is a valid point
-INVALID_PUBNONCE = bytes.fromhex(
-    "0200000000000000000000000000000000000000000000000000000000000000090287BF891D2A6DEAEBADC909352AA9405D1428C15F4B75F04DAE642A95C2548480"
-)
+# Three distinct invalid 32-byte point encodings, each rejected on decode by a
+# different check. Used to build varied pubnonce / aggnonce error cases.
+NONCANONICAL_POINT = bytes([0xFF]) * 32  # y >= p (non-canonical encoding)
+OFFCURVE_POINT = (2).to_bytes(32, "little")  # canonical y with no matching x
+TORSION_POINT = bytes(32)  # in-field, on-curve, but order 4
 
-AGGNONCE_WRONG_TAG = bytes.fromhex(
-    "048465FCF0BBDBCF443AABCCE533D42B4B5A10966AC09A49655E8C42DAAB8FCD61037496A3CC86926D452CAFCFD55D25972CA1675D549310DE296BFF42F72EEEA8C9"
-)
+# A pubshare with a non-canonical point encoding, rejected on decode.
+INVALID_PUBSHARE = NONCANONICAL_POINT
+
+# Public nonce whose first half is an off-curve point (second half valid).
+INVALID_PUBNONCE = OFFCURVE_POINT + B.to_bytes()
+
+# Aggregate nonce whose first half is a non-canonical point (second half valid).
+AGGNONCE_BAD_FIRST_HALF = NONCANONICAL_POINT + B.to_bytes()
 
 
 _SCALAR_TOKEN = r"-?\d+|true|false|null"
@@ -135,30 +136,30 @@ def reconstruct_thresh_sk(ids, secshares):
     return result
 
 
-# Fixed threshold-secret keys, one per (t, n) config, kept stable so the test
-# vectors are reproducible.
+# Fixed threshold-secret keys, one per (t, n) config: valid little-endian
+# scalars in [1, L), kept stable so the test vectors are reproducible.
 SECKEY_1OF3 = bytes.fromhex(
-    "06D47E05E97481428654563E5AE69C20C49642773B7334220E63110259A30C32"
+    "3F589DEE994B4A3A037E6F55BEF8FFE1C39642773B7334220E63110259A30C02"
 )
 SECKEY_2OF3 = bytes.fromhex(
-    "4C08C37F5B9A88FAE396A06E286BA41B654457BF5E35B4A693096ED9AB1491F5"
+    "699D5B0DD0CB74D154661EE21CC793E2634457BF5E35B4A693096ED9AB149105"
 )
 SECKEY_3OF3 = bytes.fromhex(
     "70E90852E9541FE47552B738A14C2B9B5B38C0979D640BA8C7A5A5EEE1BDA405"
 )
 SECKEY_3OF5 = bytes.fromhex(
-    "C97F278DAC5FC3214F4C2DD7551C84D4854DCA143887F54692735C61A16E902A"
+    "EFD73BD377999E71A2123E919828C6AA854DCA143887F54692735C61A16E900A"
 )
 
 
 def frost_keygen(seckey=None, n=3, t=2):
-    # NOTE: don't default `seckey` to secrets.token_bytes(32) in the signature, as that is evaluated once at import time and every no-arg call would reuse it.
+    # NOTE: don't default `seckey` to random_seckey() in the signature, as that is evaluated once at import time and every no-arg call would reuse it.
     if seckey is None:
-        seckey = secrets.token_bytes(32)
+        seckey = random_seckey()
     assert len(seckey) == 32
     assert 1 <= t <= n
     thresh_pk, secshares, pubshares = trusted_dealer_keygen(seckey, n, t)
-    assert thresh_pk == pubkey_gen_plain(seckey)
+    assert thresh_pk == pubkey_gen(seckey)
     return (n, t, thresh_pk, list(range(n)), secshares, pubshares)
 
 
@@ -194,7 +195,7 @@ class SharedGroupInputs:
 
         # pubshares pool: off-curve point at slot n, then a valid point at slot n+1
         # (the last secshare shifted so the lambda-weighted sum over min2_ids is
-        # zero) that makes the min2 signer set interpolate to the point at infinity.
+        # zero) that makes the min2 signer set interpolate to the identity.
         min2_ids = list(range(max(t, 2)))
         lam_last = derive_interpolating_value(min2_ids, min2_ids[-1])
         thresh_sk = reconstruct_thresh_sk(min2_ids, [secshares[i] for i in min2_ids])
@@ -203,21 +204,19 @@ class SharedGroupInputs:
         )
         self.pool_pubshares = pubshares + [
             PlainPk(INVALID_PUBSHARE),
-            PlainPk((cancel_sk * G).to_bytes_compressed()),
+            PlainPk((cancel_sk * B).to_bytes()),
         ]
         # secshares pool: zero scalar at slot n.
         self.pool_secshares = secshares + [b"\x00" * 32]
 
         # pubnonces pool: off-curve nonce at slot n, then the inverse nonce at slot
         # n+1 (negation of the aggregate of the first n-1 real pubnonces). It only
-        # sums to infinity when paired with indices [0..n-2] plus INVERSE_PUBNONCE_IDX.
-        # Any other size n-1 subset yields a non-infinity aggregate.
+        # sums to the identity when paired with indices [0..n-2] plus INVERSE_PUBNONCE_IDX.
+        # Any other size n-1 subset yields a non-identity aggregate.
         tmp = nonce_agg(self.pubnonces[: n - 1])
-        R1 = GE.from_bytes_compressed_with_infinity(tmp[0:33])
-        R2 = GE.from_bytes_compressed_with_infinity(tmp[33:66])
-        inverse_pubnonce = (-R1).to_bytes_compressed_with_infinity() + (
-            -R2
-        ).to_bytes_compressed_with_infinity()
+        R1 = GE.from_bytes_with_identity(tmp[0:32])
+        R2 = GE.from_bytes_with_identity(tmp[32:64])
+        inverse_pubnonce = (-R1).to_bytes() + (-R2).to_bytes()
         self.pool_pubnonces = self.pubnonces + [INVALID_PUBNONCE, inverse_pubnonce]
 
         # secnonces pool: all-zero at slot n, nonzero-first/zero-second at slot n+1.
@@ -227,7 +226,7 @@ class SharedGroupInputs:
 
         # named offsets into the pools, all derived from n
         self.INVALID_PUBSHARE_IDX = n
-        self.INFINITY_PUBSHARE_IDX = n + 1
+        self.IDENTITY_PUBSHARE_IDX = n + 1
         self.SECSHARE_ZERO_IDX = n
         self.INVALID_PUBNONCE_IDX = n
         self.INVERSE_PUBNONCE_IDX = n + 1

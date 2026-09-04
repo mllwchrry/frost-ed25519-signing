@@ -7,13 +7,15 @@ from frost_ref import (
     partial_sig_verify,
     sign,
 )
-from secp256k1lab.secp256k1 import Scalar
+from ed25519lab.ed25519 import B, Scalar
 
 from generators.common import (
     COMMON_MSGS,
     CONFIGS,
     GROUP_ORDER,
-    AGGNONCE_WRONG_TAG,
+    AGGNONCE_BAD_FIRST_HALF,
+    NONCANONICAL_POINT,
+    OFFCURVE_POINT,
     SharedGroupInputs,
     assign_tc_ids,
     bytes_list_to_hex,
@@ -28,12 +30,11 @@ from generators.common import (
 
 # Fault literals that are case payloads rather than pool material (config-independent,
 # never indexed from a pool), so they stay local to this generator.
-AGGNONCE_BAD_XCOORD = bytes.fromhex(
-    "028465FCF0BBDBCF443AABCCE533D42B4B5A10966AC09A49655E8C42DAAB8FCD61020000000000000000000000000000000000000000000000000000000000000009"
-)
-AGGNONCE_EXCEEDS_FIELD = bytes.fromhex(
-    "028465FCF0BBDBCF443AABCCE533D42B4B5A10966AC09A49655E8C42DAAB8FCD6102FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30"
-)
+# Aggregate nonces with a valid first half and a non-canonical second half.
+# Second half is a canonical y with no matching x (off the curve).
+AGGNONCE_OFFCURVE = B.to_bytes() + OFFCURVE_POINT
+# Second half is a non-canonical encoding (y >= p).
+AGGNONCE_NONCANONICAL = B.to_bytes() + NONCANONICAL_POINT
 
 
 class SignVerifyGroupBuilder:
@@ -264,17 +265,19 @@ class SignVerifyGroupBuilder:
             COMMON_MSGS[0],
             "All signers participate, signed by a non-first member of the signer set",
         )
-        # Aggregate nonce is the point at infinity. The inverse pubnonce cancels
-        # the first n-1 real pubnonces, so the aggregate over them is infinity.
-        inf_pubnonce_indices = list(range(n - 1)) + [self.inputs.INVERSE_PUBNONCE_IDX]
+        # Aggregate nonce is the identity. The inverse pubnonce cancels
+        # the first n-1 real pubnonces, so the aggregate over them is the identity.
+        identity_pubnonce_indices = list(range(n - 1)) + [
+            self.inputs.INVERSE_PUBNONCE_IDX
+        ]
         self._append_valid(
             0,
             self.full,
             self.full,
-            inf_pubnonce_indices,
-            self._agg(inf_pubnonce_indices),
+            identity_pubnonce_indices,
+            self._agg(identity_pubnonce_indices),
             COMMON_MSGS[0],
-            "Aggregate nonce is the point at infinity, so the final nonce point falls back to the generator G",
+            "Aggregate nonce is the identity point, so the final nonce point falls back to the base point B",
         )
         # Message variations over the minimum set.
         self._append_valid(
@@ -360,17 +363,17 @@ class SignVerifyGroupBuilder:
         )
         # The crafted pool slot replaces the min2 set's last share, cancelling the
         # interpolation.
-        pubshare_indices_infinity = self.min2[:-1] + [self.inputs.INFINITY_PUBSHARE_IDX]
+        pubshare_indices_identity = self.min2[:-1] + [self.inputs.IDENTITY_PUBSHARE_IDX]
         self._append_sign_error(
             0,
             self.min2,
-            pubshare_indices_infinity,
+            pubshare_indices_identity,
             0,
             0,
             self._agg(self.min2),
             COMMON_MSGS[0],
             "value",
-            "Public shares of the signer set interpolate to the point at infinity",
+            "Public shares of the signer set interpolate to the identity element",
         )
         # A signer id equals n, outside the valid range. For t >= 2 an in-range
         # member signs. At t=1 the lone id is out of range and the check fires
@@ -423,10 +426,10 @@ class SignVerifyGroupBuilder:
             self.min_s,
             0,
             0,
-            AGGNONCE_WRONG_TAG,
+            AGGNONCE_BAD_FIRST_HALF,
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate nonce is invalid: first half has an unknown tag 0x04",
+            "Aggregate nonce is invalid: first half's y-coordinate exceeds the field size",
         )
         self._append_sign_error(
             0,
@@ -434,7 +437,7 @@ class SignVerifyGroupBuilder:
             self.min_s,
             0,
             0,
-            AGGNONCE_BAD_XCOORD,
+            AGGNONCE_OFFCURVE,
             COMMON_MSGS[0],
             "invalid_contrib",
             "Aggregate nonce is invalid: second half is not a point on the curve",
@@ -445,10 +448,10 @@ class SignVerifyGroupBuilder:
             self.min_s,
             0,
             0,
-            AGGNONCE_EXCEEDS_FIELD,
+            AGGNONCE_NONCANONICAL,
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate nonce is invalid: second half's x-coordinate exceeds the field size",
+            "Aggregate nonce is invalid: second half's y-coordinate exceeds the field size",
         )
         # All-zero secret nonce (first scalar out of range).
         self._append_sign_error(

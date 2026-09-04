@@ -8,10 +8,15 @@ from frost_ref import (
 )
 from frost_ref.signing import nonce_gen_internal
 
+from ed25519lab.ed25519 import B
+
 from generators.common import (
     COMMON_MSGS,
     CONFIGS,
-    AGGNONCE_WRONG_TAG,
+    AGGNONCE_BAD_FIRST_HALF,
+    NONCANONICAL_POINT,
+    OFFCURVE_POINT,
+    TORSION_POINT,
     SharedGroupInputs,
     assign_tc_ids,
     bytes_list_to_hex,
@@ -33,15 +38,13 @@ RANDS = [
 
 # Fault literals that are case payloads rather than pool material (config-independent,
 # never indexed from a pool), so they stay local to this generator.
-AGGOTHERNONCE_FIRST_HALF_ZERO = bytes.fromhex(
-    "0000000000000000000000000000000000000000000000000000000000000000000287BF891D2A6DEAEBADC909352AA9405D1428C15F4B75F04DAE642A95C2548480"
-)
-AGGOTHERNONCE_BAD_POINT = bytes.fromhex(
-    "0353BC2314D46C813AF81317AF1BDF99816B6444E416BB8D3DC04ACB2F5388D1AC020000000000000000000000000000000000000000000000000000000000000009"
-)
-AGGOTHERNONCE_EXCEEDS_FIELD = bytes.fromhex(
-    "0353BC2314D46C813AF81317AF1BDF99816B6444E416BB8D3DC04ACB2F5388D1AC02FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30"
-)
+# The all-zero encoding is the order-4 torsion point (rejected by the subgroup
+# check), so "first half is all zeros" is a genuine case, not junk bytes.
+AGGOTHERNONCE_FIRST_HALF_ZERO = TORSION_POINT + B.to_bytes()
+# Second half is a canonical y with no matching x (off the curve).
+AGGOTHERNONCE_OFFCURVE = B.to_bytes() + OFFCURVE_POINT
+# Second half is a non-canonical encoding (y >= p).
+AGGOTHERNONCE_NONCANONICAL = B.to_bytes() + NONCANONICAL_POINT
 
 
 class DetSignGroupBuilder:
@@ -390,8 +393,8 @@ class DetSignGroupBuilder:
             RANDS[0],
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate of the other signers' nonces is invalid: first half has an unknown tag 0x04",
-            aggothernonce=AGGNONCE_WRONG_TAG,
+            "Aggregate of the other signers' nonces is invalid: first half's y-coordinate exceeds the field size",
+            aggothernonce=AGGNONCE_BAD_FIRST_HALF,
         )
         self._append_error(
             0,
@@ -401,7 +404,7 @@ class DetSignGroupBuilder:
             RANDS[0],
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate of the other signers' nonces is invalid: first half is all zeros",
+            "Aggregate of the other signers' nonces is invalid: first half is the all-zero encoding, an order-4 torsion point",
             aggothernonce=AGGOTHERNONCE_FIRST_HALF_ZERO,
         )
         self._append_error(
@@ -413,7 +416,7 @@ class DetSignGroupBuilder:
             COMMON_MSGS[0],
             "invalid_contrib",
             "Aggregate of the other signers' nonces is invalid: second half is not a point on the curve",
-            aggothernonce=AGGOTHERNONCE_BAD_POINT,
+            aggothernonce=AGGOTHERNONCE_OFFCURVE,
         )
         self._append_error(
             0,
@@ -423,8 +426,8 @@ class DetSignGroupBuilder:
             RANDS[0],
             COMMON_MSGS[0],
             "invalid_contrib",
-            "Aggregate of the other signers' nonces is invalid: second half's x-coordinate exceeds the field size",
-            aggothernonce=AGGOTHERNONCE_EXCEEDS_FIELD,
+            "Aggregate of the other signers' nonces is invalid: second half's y-coordinate exceeds the field size",
+            aggothernonce=AGGOTHERNONCE_NONCANONICAL,
         )
         # Fewer signers than the threshold (empty set at t=1). The helper returns no
         # aggregate for a set that holds no signer other than my_id, so this case

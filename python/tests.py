@@ -20,10 +20,11 @@ from frost_ref.signing import (
     partial_sig_verify_internal,
     sign,
 )
-from secp256k1lab.keys import pubkey_gen_plain
-from secp256k1lab.secp256k1 import G
-from secp256k1lab.util import int_from_bytes
-from trusted_dealer import trusted_dealer_keygen
+from ed25519lab.ed25519 import B
+from ed25519lab.keys import pubkey_gen
+from ed25519lab.util import int_from_bytes
+from ed25519lab.verify import ed25519_verify
+from trusted_dealer import random_seckey, trusted_dealer_keygen
 
 
 def fromhex_all(hex_values):
@@ -78,9 +79,7 @@ def generate_frost_keys(
     if not (2 <= t <= n):
         raise ValueError("values must satisfy: 2 <= t <= n")
 
-    thresh_pk, secshares, pubshares = trusted_dealer_keygen(
-        secrets.token_bytes(32), n, t
-    )
+    thresh_pk, secshares, pubshares = trusted_dealer_keygen(random_seckey(), n, t)
 
     # IDs are 0-indexed: the index in the list IS the participant ID
     assert len(secshares) == n
@@ -153,14 +152,11 @@ def test_sign_verify_vectors():
         secshares = fromhex_all(group["secshares"])
         secnonces = fromhex_all(group["secnonces"])
         for i in range(n):
-            assert pubshares[i] == PlainPk(pubkey_gen_plain(secshares[i]))
+            assert pubshares[i] == PlainPk(pubkey_gen(secshares[i]))
         k_1 = int_from_bytes(secnonces[0][0:32])
         k_2 = int_from_bytes(secnonces[0][32:64])
-        assert not (k_1 * G).infinity and not (k_2 * G).infinity
-        assert (
-            pubnonces[0]
-            == (k_1 * G).to_bytes_compressed() + (k_2 * G).to_bytes_compressed()
-        )
+        assert not (k_1 * B).is_identity and not (k_2 * B).is_identity
+        assert pubnonces[0] == (k_1 * B).to_bytes() + (k_2 * B).to_bytes()
 
         for tc in group["valid_tests"]:
             ids_tmp = tc["ids"]
@@ -259,7 +255,7 @@ def test_det_sign_vectors():
         pubshares = fromhex_all(group["pubshares"])
         secshares = fromhex_all(group["secshares"])
         for i in range(n):
-            assert pubshares[i] == PlainPk(pubkey_gen_plain(secshares[i]))
+            assert pubshares[i] == PlainPk(pubkey_gen(secshares[i]))
 
         for test_case in group["valid_tests"]:
             ids_tmp = test_case["ids"]
@@ -377,6 +373,7 @@ def test_sig_agg_vectors():
             session_ctx = SessionContext(*signer_set, aggnonce_tmp, msg)
             final_sig = partial_sig_agg(psigs_tmp, session_ctx)
             assert final_sig == expected
+            assert ed25519_verify(msg, thresh_pk, final_sig)
 
         for test_case in group["error_tests"]:
             exception, except_fn = get_error_details(test_case)
@@ -543,11 +540,8 @@ def test_sign_and_verify_random(iterations: int) -> None:
             0,
         )
 
-        # Exercise the aggregation path. End-to-end verification of the
-        # aggregate signature returns in the Ed25519 port, via the library
-        # verifier (ed25519lab.schnorr.ed25519_verify); until then the
-        # sig_agg / sign_verify vector tests byte-pin the aggregate output.
-        partial_sig_agg(signer_psigs, session_ctx)
+        final_sig = partial_sig_agg(signer_psigs, session_ctx)
+        assert ed25519_verify(msg, thresh_pk, final_sig)
 
 
 def run_test(test_name, test_func):

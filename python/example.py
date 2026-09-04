@@ -7,7 +7,7 @@ import asyncio
 import argparse
 import secrets
 
-# Import frost_ref first to set up secp256k1lab path
+# Import frost_ref first to set up the ed25519lab path
 from frost_ref import (
     nonce_gen,
     nonce_agg,
@@ -18,7 +18,8 @@ from frost_ref import (
     PlainPk,
 )
 from frost_ref.signing import partial_sig_verify_internal
-from trusted_dealer import trusted_dealer_keygen
+from trusted_dealer import random_seckey, trusted_dealer_keygen
+from ed25519lab.verify import ed25519_verify
 
 
 #
@@ -71,14 +72,12 @@ def generate_frost_keys(
     """Generate t-of-n FROST keys using trusted dealer.
 
     Returns:
-        thresh_pk: Threshold public key (33-byte compressed)
+        thresh_pk: Threshold public key (32 bytes, RFC 8032 encoding)
         ids: List of signer IDs (0-indexed: 0, 1, ..., n-1)
         secshares: List of secret shares (32-byte scalars)
-        pubshares: List of public shares (33-byte compressed)
+        pubshares: List of public shares (32 bytes, RFC 8032 encoding)
     """
-    thresh_pk, secshares, pubshares = trusted_dealer_keygen(
-        secrets.token_bytes(32), n, t
-    )
+    thresh_pk, secshares, pubshares = trusted_dealer_keygen(random_seckey(), n, t)
 
     assert len(secshares) == n
     ids = list(range(len(secshares)))  # ids are 0..n-1
@@ -106,7 +105,7 @@ async def participant(
     the partial_sig_verify_internal check below takes our own share directly.
 
     Returns:
-        (psig, final_sig): Partial signature and final aggregate signature
+        (psig, final_sig): Partial signature and final Ed25519 signature
     """
     _, _, _, _, thresh_pk = signer_set
 
@@ -137,7 +136,7 @@ async def coordinator(
     Coordinator in FROST signing protocol.
 
     Returns:
-        final_sig: Final aggregate signature (transitional: compressed R || s)
+        final_sig: Final Ed25519 signature (R || s)
     """
     # Determine the signers
     _, _, signer_ids, _, _ = signer_set
@@ -280,14 +279,13 @@ def main():
     print()
 
     print("=== Final Signature ===")
-    print(f"Aggregate signature (transitional, compressed R || s): {final_sig.hex()}")
+    print(f"Ed25519 signature (R || s): {final_sig.hex()}")
     print()
 
-    # 6. Verify signature. The end-to-end check returns in the Ed25519 port,
-    # via the library verifier (ed25519lab.schnorr.ed25519_verify, the
-    # cofactorless s*B == R + e*A that Solana runs).
+    # 6. Verify signature
+    assert ed25519_verify(msg, thresh_pk, final_sig)
     print("=== Verification ===")
-    print("Aggregate signature produced (verification returns with the library).")
+    print("Signature verified successfully!")
 
 
 if __name__ == "__main__":
