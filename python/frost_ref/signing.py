@@ -301,16 +301,15 @@ def validate_session_params(
 
 def get_session_values(
     session_ctx: SessionContext,
-) -> Tuple[GE, List[int], Optional[List[PlainPk]], Scalar, GE, Scalar]:
+) -> Tuple[List[int], Optional[List[PlainPk]], Scalar, GE, Scalar]:
     (n, t, ids, pubshares, thresh_pk, aggnonce, msg) = session_ctx
     validate_session_params(n, t, ids, pubshares, thresh_pk)
-    Q = GE.from_bytes(thresh_pk)
     # the signers are a set, so serialize_ids sorts to keep b independent of ids order
     ser_ids = serialize_ids(ids)
     b = Scalar.from_bytes_wide(
         tagged_hash(
             FROST_TAG_NONCECOEF,
-            len(ids).to_bytes(4, "big") + ser_ids + aggnonce + Q.to_bytes() + msg,
+            len(ids).to_bytes(4, "big") + ser_ids + aggnonce + thresh_pk + msg,
         )
     )
     assert b != 0
@@ -327,9 +326,9 @@ def get_session_values(
     # keeps blame attribution runnable via partial_sig_verify.
     R = R_ if not R_.is_identity else B
     assert not R.is_identity
-    e = Scalar.from_bytes_wide(hash_sha512(R.to_bytes() + Q.to_bytes() + msg))
+    e = Scalar.from_bytes_wide(hash_sha512(R.to_bytes() + thresh_pk + msg))
     assert e != 0
-    return (Q, ids, pubshares, b, R, e)
+    return (ids, pubshares, b, R, e)
 
 
 def serialize_ids(ids: List[int]) -> bytes:
@@ -341,7 +340,7 @@ def serialize_ids(ids: List[int]) -> bytes:
 def sign(
     secnonce: bytearray, secshare: bytes, my_id: int, session_ctx: SessionContext
 ) -> bytes:
-    (_, ids, pubshares, b, _, e) = get_session_values(session_ctx)
+    (ids, pubshares, b, _, e) = get_session_values(session_ctx)
     try:
         k_1 = Scalar.from_bytes_nonzero_checked(bytes(secnonce[0:32]))
     except ValueError:
@@ -486,7 +485,7 @@ def partial_sig_verify_internal(
     pubshare: bytes,
     session_ctx: SessionContext,
 ) -> bool:
-    (_, ids, _, b, _, e) = get_session_values(session_ctx)
+    (ids, _, b, _, e) = get_session_values(session_ctx)
     try:
         s = Scalar.from_bytes_checked(psig)
     except ValueError:
@@ -506,7 +505,7 @@ def partial_sig_verify_internal(
 
 
 def partial_sig_agg(psigs: List[bytes], session_ctx: SessionContext) -> bytes:
-    (_, ids, _, _, R, _) = get_session_values(session_ctx)
+    (ids, _, _, R, _) = get_session_values(session_ctx)
     if len(psigs) != len(ids):
         raise ValueError("The psigs and ids lists must have the same length.")
     s = Scalar(0)
