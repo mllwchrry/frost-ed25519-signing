@@ -85,7 +85,7 @@ Before signing, the threshold info must pass *ValidateThresholdInfo*, which chec
 Running it on a threshold info containing all *n* public shares therefore validates the entire key material.
 *GetSessionValues* repeats this check for the one signer set the coordinator selected.
 
-[^chilldkg-keys]: ChillDKG satisfies both conditions, so its [DKG output](https://github.com/mllwchrry/bip-frost-dkg#dkg-outputs) can be used directly as key material.
+[^chilldkg-keys]: ChillDKG satisfies both conditions, so its [DKG output](https://github.com/BlockstreamResearch/frost-ed25519-dkg#dkg-outputs) can be used directly as key material.
 
 [^prime-order-keys]: The threshold public key and public shares must lie in the prime-order subgroup. *ValidateThresholdInfo* enforces this by decoding them with *point*, which rejects small-order and mixed-order points; a key generation protocol that does not enforce prime-order subgroup membership is therefore incompatible with this signing protocol.
 
@@ -652,7 +652,7 @@ For any other *aggnonce'*, the reduction sets *aggnonce = aggnonce'*.
 <!-- References -->
 [rfc8032]: https://www.rfc-editor.org/rfc/rfc8032.html
 [rfc9591]: https://www.rfc-editor.org/rfc/rfc9591.html
-[chilldkg]: https://github.com/mllwchrry/bip-frost-dkg
+[chilldkg]: https://github.com/BlockstreamResearch/frost-ed25519-dkg
 [bip327]: https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki
 [bip-frost-signing-secp]: https://github.com/siv2r/bip-frost-signing
 [musig]: https://eprint.iacr.org/2018/068
